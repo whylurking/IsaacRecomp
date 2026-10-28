@@ -1,5 +1,6 @@
 // Vector rasterization (PlutoVG): shapes, morphs, text and BitmapData.draw().
 #include "raster.h"
+#include <chrono>
 #include "snapshot.h"
 #include "platform.h"
 #include "display.h"
@@ -28,13 +29,16 @@ static plutovg_color_t colorOf(uint32_t argb, const CX* cx) {
         r = clamp01(r * cx->rm + cx->ra / 255.f); g = clamp01(g * cx->gm + cx->ga / 255.f);
         b = clamp01(b * cx->bm + cx->ba / 255.f); a = clamp01(a * cx->am + cx->aa / 255.f);
     }
+    if (kPxABGR) std::swap(r, b);   // (plutovg packs the channels as given: the PSP's order)
     return {r, g, b, a};
 }
 static plutovg_matrix_t pm(const Mat& m) { return {(float)m.a, (float)m.b, (float)m.c, (float)m.d, (float)m.tx, (float)m.ty}; }
 
 // ============================================================ SWF bitmap surfaces (cached per color transform)
 struct BmKey { uint16_t id; CX cx; bool operator<(const BmKey& o) const { if (id != o.id) return id < o.id; return memcmp(&cx, &o.cx, sizeof(CX)) < 0; } };
-static std::map<BmKey, plutovg_surface_t*> g_bmSurf;
+struct BmSurf { plutovg_surface_t* s = nullptr; uint32_t lastUse = 0; };
+static std::map<BmKey, BmSurf> g_bmSurf;
+static uint32_t g_bmClock = 0;   // (rasterTrim)
 static std::vector<uint32_t> g_bmTmpStore[64];
 
 static std::mutex g_bmMu, g_morphMu;   // caches shared with the raster threads
@@ -42,7 +46,7 @@ static plutovg_surface_t* bitmapSurface(uint16_t id, const CX* cx) {
     std::lock_guard<std::mutex> lk(g_bmMu);
     BmKey k{id, cx ? *cx : CX()};
     auto it = g_bmSurf.find(k);
-    if (it != g_bmSurf.end()) return it->second;
+    if (it != g_bmSurf.end()) { it->second.lastUse = g_bmClock; return it->second.s; }
     CharDef* cd = g_movie.get(id);
     if (!cd || cd->type != CH_BITMAP) return nullptr;
     BitmapDef* b = (BitmapDef*)cd; b->decode();
@@ -53,15 +57,39 @@ static plutovg_surface_t* bitmapSurface(uint16_t id, const CX* cx) {
         s = plutovg_surface_create(b->w, b->h);
         uint32_t* dst = (uint32_t*)plutovg_surface_get_data(s);
         for (int i = 0; i < b->w * b->h; i++) {
-            uint32_t p = b->px[i]; float a = (p >> 24) / 255.f;
+            uint32_t p = pxToArgb(b->px[i]); float a = (p >> 24) / 255.f;
             float r = a > 0 ? ((p >> 16) & 255) / 255.f / a : 0, g = a > 0 ? ((p >> 8) & 255) / 255.f / a : 0, bb = a > 0 ? (p & 255) / 255.f / a : 0;
             plutovg_color_t c = colorOf(0xff000000u | (uint32_t)(r * 255) << 16 | (uint32_t)(g * 255) << 8 | (uint32_t)(bb * 255), cx);
             float na = clamp01(a * cx->am + cx->aa / 255.f);
             dst[i] = (uint32_t)(na * 255 + .5f) << 24 | (uint32_t)(c.r * na * 255 + .5f) << 16 | (uint32_t)(c.g * na * 255 + .5f) << 8 | (uint32_t)(c.b * na * 255 + .5f);
         }
     }
-    g_bmSurf[k] = s;
+    g_bmSurf[k] = {s, g_bmClock};
     return s;
+}
+// (PSP: memory) drops the SWF bitmaps (decoded, and their colour-transformed copies) not used since the last call,
+// least recently used first, while they take more than the budget. Called once per tick, when nothing is drawing.
+void rasterTrim(size_t budget) {
+    std::lock_guard<std::mutex> lk(g_bmMu);
+    uint32_t now = g_bmClock++;
+    size_t bytes = 0;
+    for (auto& kv : g_bmSurf) bytes += (size_t)plutovg_surface_get_width(kv.second.s) * plutovg_surface_get_height(kv.second.s) * 4;
+    if (bytes <= budget) return;
+    std::vector<std::pair<uint32_t, BmKey>> order;
+    for (auto& kv : g_bmSurf) if (kv.second.lastUse != now) order.push_back({kv.second.lastUse, kv.first});
+    std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (auto& o : order) {
+        if (bytes <= budget * 3 / 4) break;
+        auto it = g_bmSurf.find(o.second);
+        plutovg_surface_t* sf = it->second.s;
+        bytes -= (size_t)plutovg_surface_get_width(sf) * plutovg_surface_get_height(sf) * 4;
+        plutovg_surface_destroy(sf);
+        uint16_t id = it->first.id; g_bmSurf.erase(it);
+        bool more = false; for (auto& kv : g_bmSurf) if (kv.first.id == id) { more = true; break; }
+        if (!more) if (CharDef* cd = g_movie.get(id)) if (cd->type == CH_BITMAP) {   // (the decoded pixels too: decoded again when needed)
+            BitmapDef* b = (BitmapDef*)cd; std::vector<uint32_t>().swap(b->px); b->decoded = false;
+        }
+    }
 }
 
 // ============================================================ style painting
@@ -133,6 +161,7 @@ static void lineOne(plutovg_canvas_t* cv, const ShapeLayer& L, size_t i, const p
 }
 
 void paintShape(plutovg_canvas_t* cv, const ShapeDef* s, const Mat& m, const CX* cx) {
+    shapeEnsure(const_cast<ShapeDef*>(s));
     plutovg_matrix_t pmm = pm(m);
     double sc = std::max(1e-6, matScale(m));
     if (g_frontToBack) {
@@ -322,7 +351,11 @@ bool rasterizeSrc(const RasterSrc& src, double scale, Raster& out) {
     b.x0 -= pad; b.y0 -= pad; b.x1 += pad; b.y1 += pad;
     int w = (int)std::ceil((b.x1 - b.x0) * scale), h = (int)std::ceil((b.y1 - b.y0) * scale);
     if (w <= 0 || h <= 0) return false;
+#ifdef __PSP__
+    const int MAXT = 512;    // (the GE's largest texture, an atlas page: bigger ones are rasterized smaller and scaled up)
+#else
     const int MAXT = 4096;
+#endif
     if (w > MAXT || h > MAXT) { double f = std::min((double)MAXT / w, (double)MAXT / h); scale *= f; w = std::min(MAXT, (int)std::ceil((b.x1 - b.x0) * scale)); h = std::min(MAXT, (int)std::ceil((b.y1 - b.y0) * scale)); }
     out.w = w; out.h = h; out.x0 = b.x0; out.y0 = b.y0; out.scale = scale;
     out.px.assign((size_t)w * h, 0);
@@ -477,7 +510,11 @@ static bool planLeaf(DisplayObject* d, const Mat& m, const CX& cx, LeafPlan& p) 
     for (int i = 0; i < 4; i++) { double x, y; mm.apply(xs[i], ys[i], x, y); lx = std::min(lx, x); hx = std::max(hx, x); ly = std::min(ly, y); hy = std::max(hy, y); }
     int x0 = (int)std::floor(lx) - 2, y0 = (int)std::floor(ly) - 2, x1 = (int)std::ceil(hx) + 2, y1 = (int)std::ceil(hy) + 2;
     p.w = x1 - x0; p.h = y1 - y0;
+#ifdef __PSP__
+    if (p.w <= 0 || p.h <= 0 || p.w > 1024 || p.h > 1024) return false;   // (memory: big ones painted straight into the bitmap)
+#else
     if (p.w <= 0 || p.h <= 0 || p.w > 4096 || p.h > 4096) return false;
+#endif
     p.d = d; p.mm = mm; p.cx = cx; p.hasCx = !cx.identity();
     p.bx = x0; p.by = y0; p.dx = (int)ftx + x0; p.dy = (int)fty + y0;
     memset(&p.key, 0, sizeof p.key);
@@ -541,9 +578,10 @@ static void drawBitmapData(plutovg_canvas_t* cv, BitmapData* b, const Mat& m, co
         tmp = b->px;
         for (auto& p : tmp) {
             float a = (p >> 24) / 255.f; if (a <= 0) { p = 0; continue; }
+            p = pxToArgb(p);
             float r = ((p >> 16) & 255) / 255.f / a, g = ((p >> 8) & 255) / 255.f / a, bb = (p & 255) / 255.f / a;
             float nr = clamp01(r * cx.rm + cx.ra / 255.f), ng = clamp01(g * cx.gm + cx.ga / 255.f), nb = clamp01(bb * cx.bm + cx.ba / 255.f), na = clamp01(a * cx.am + cx.aa / 255.f);
-            p = (uint32_t)(na * 255 + .5f) << 24 | (uint32_t)(nr * na * 255 + .5f) << 16 | (uint32_t)(ng * na * 255 + .5f) << 8 | (uint32_t)(nb * na * 255 + .5f);
+            p = pxFromArgb((uint32_t)(na * 255 + .5f) << 24 | (uint32_t)(nr * na * 255 + .5f) << 16 | (uint32_t)(ng * na * 255 + .5f) << 8 | (uint32_t)(nb * na * 255 + .5f));
         }
         src = tmp.data();
     }
@@ -572,7 +610,7 @@ static void drawBitmapData(plutovg_canvas_t* cv, BitmapData* b, const Mat& m, co
 static void addMaskPaths(plutovg_canvas_t* cv, DisplayObject* d, const Mat& m, int depth) {
     if (depth > 32) return;
     if (d->kind == OK_SHAPE) {
-        ShapeDef* s = (ShapeDef*)((ShapeObj*)d)->def;
+        ShapeDef* s = (ShapeDef*)((ShapeObj*)d)->def; shapeEnsure(s);
         plutovg_matrix_t mm = pm(m); plutovg_canvas_set_matrix(cv, &mm);
         for (auto& L : s->layers) for (auto& p : L.fillPaths) addPath(cv, p);
     } else if (d->kind == OK_CLIP) {
@@ -645,13 +683,24 @@ static void evictLeaves() {
     for (auto& kv : g_leafCache) order.push_back({kv.second->lastUse, kv.first});
     std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     for (auto& o : order) {
+#ifdef __PSP__
+        if (g_leafBytes <= g_lim.leafBudgetBytes * 3 / 4) break;   // (memory: even the leaves of this draw, it is done)
+#else
         if (g_leafBytes <= g_lim.leafBudgetBytes * 3 / 4 || o.first == g_leafSeq) break;
+#endif
         auto it = g_leafCache.find(o.second);
         g_leafBytes -= it->second->px.size() * 4; delete it->second; g_leafCache.erase(it);
     }
 }
 
+double g_bmDrawMs = 0;   // (diagnostics) time in BitmapData.draw
+void bitmapDrawImpl(BitmapData* bd, Object* src, const Mat& m, const CX* cx);
 void bitmapDraw(BitmapData* bd, Object* src, const Mat& m, const CX* cx) {
+    auto t0 = std::chrono::steady_clock::now();
+    bitmapDrawImpl(bd, src, m, cx);
+    g_bmDrawMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+void bitmapDrawImpl(BitmapData* bd, Object* src, const Mat& m, const CX* cx) {
     if (!bd->w || !bd->h || bd->disposed) return;
     bd->ensurePx();
     static bool prof = getenv("ISAAC_DRAWPROF") != nullptr;
@@ -707,7 +756,7 @@ void bitmapDraw(BitmapData* bd, Object* src, const Mat& m, const CX* cx) {
 }
 
 void rasterMemStats() {
-    size_t bm = 0; for (auto& kv : g_bmSurf) bm += (size_t)plutovg_surface_get_width(kv.second) * plutovg_surface_get_height(kv.second) * 4;
+    size_t bm = 0; for (auto& kv : g_bmSurf) bm += (size_t)plutovg_surface_get_width(kv.second.s) * plutovg_surface_get_height(kv.second.s) * 4;
     size_t mor = 0; for (auto& kv : g_morphCache) for (auto& L : kv.second->layers) for (auto& P : L.fillPaths) mor += P.pts.size() * 4 + P.verbs.size();
     size_t pts = 0, hit = 0, nsh = 0;
     for (CharDef* cd : g_movie.chars) if (cd && cd->type == CH_SHAPE) { ShapeDef* sd = (ShapeDef*)cd; nsh++;

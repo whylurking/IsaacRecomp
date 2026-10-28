@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <atomic>
 
 namespace fl {
 
@@ -30,6 +31,7 @@ struct SnapNode {
     RectF bounds; bool hasBounds = false;   // local bounds of the content
     // bitmap (SN_BITMAP)
     uint32_t bmUid = 0; int bmW = 0, bmH = 0; bool smoothing = false;
+    const uint32_t* bmPx = nullptr;   // (PSP) the BitmapData's pixels, drawn in place (valid until the next tick)
     // filters (blur only)
     bool blur = false; float blurX = 0, blurY = 0; int blurPasses = 1;
 };
@@ -79,6 +81,10 @@ struct Snapshot {
     bool focusStrong = false;     // ... deep red instead (the main menu's Start)
     int rebindRequests = 0;       // grows when the player asks for the rebinding screen (menuui.cpp)
     bool frog = false, lefty = false;   // the game's AZERTY / lefty control options
+    // the part of the stage to show (WideSaac): fitted to the window, centered; viewClip = false also shows what lies
+    // around it (the window's whole area). Unset: the whole stage, letterboxed (the default)
+    bool viewSet = false, viewClip = true; float view[4] = {};
+    bool viewCut = false; float cut[4] = {};   // (WideSaac's boss intros) only this part of the stage is drawn, black around it
     // computed by the renderer on adoption: uid → node index (open table, power of 2) and, per node, the
     // displacement relative to the previous tick (to detect jumps)
     std::vector<uint64_t> uidTable; uint32_t uidMask = 0;
@@ -98,6 +104,14 @@ using SnapPtr = std::shared_ptr<Snapshot>;
 
 // logic thread
 SnapPtr buildSnapshot();
+// set by the logic thread (mods) and copied into each snapshot
+struct ViewReq { bool set = false, clip = true, cut = false; float r[4] = {}, c[4] = {}; };   // cut: only c (stage px) is drawn, black around it
+extern ViewReq g_viewReq;
+// per display object, for the snapshot only (the game never sees it; WideSaac's Hyper Zoom): hidden, and / or drawn
+// with another local matrix. Rebuilt by the logic thread every tick before buildSnapshot.
+struct SnapOv { bool hide = false, hasM = false, hasCx = false; Mat m; float alpha = -1; CX cx; };   // alpha >= 0: multiplies the node's alpha; hasCx: cx applied over the node's own color transform
+extern std::unordered_map<DisplayObject*, SnapOv> g_snapOv;
+extern std::atomic<float> g_windowAspect;   // the window's width / height (main thread), 0 if unknown
 void bitmapGone(BitmapData* b);   // a BitmapData was destroyed or released (dispose)
 // GPU layers (see BitmapData::gpu). gpuBitmapsEnabled: only with a renderer (in renderer-less tests, everything is on the CPU)
 extern bool g_gpuBitmaps;

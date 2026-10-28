@@ -355,14 +355,16 @@ static Value mc_globalToLocal(Act&, Value t, int argc, Value* argv) {
 // ============================================================ BitmapData
 void bitmapDraw(BitmapData* bd, Object* src, const Mat& m, const CX* cx);   // raster.cpp
 static BitmapData* asBD(const Value& v) { return v.isObj() && v.o->kind == OK_BITMAPDATA ? (BitmapData*)v.o : nullptr; }
+// script colour (ARGB) -> stored pixel (premultiplied, in memory order: see kPxABGR), and back
 static uint32_t premul(uint32_t argb) {
-    uint32_t a = argb >> 24; if (a == 255) return argb; if (a == 0) return 0;
+    uint32_t a = argb >> 24; if (a == 255) return pxFromArgb(argb); if (a == 0) return 0;
     uint32_t r = ((argb >> 16) & 255) * a / 255, g = ((argb >> 8) & 255) * a / 255, b = (argb & 255) * a / 255;
-    return a << 24 | r << 16 | g << 8 | b;
+    return pxFromArgb(a << 24 | r << 16 | g << 8 | b);
 }
 static uint32_t unpremul(uint32_t p) {
+    p = pxToArgb(p);
     uint32_t a = p >> 24; if (a == 255 || a == 0) return a == 0 ? 0 : p;
-    uint32_t r = std::min(255u, ((p >> 16) & 255) * 255 / a), g = std::min(255u, ((p >> 8) & 255) * 255 / a), b = std::min(255u, (p & 255) * 255 / a);
+    uint32_t r = std::min<uint32_t>(255u, ((p >> 16) & 255) * 255 / a), g = std::min<uint32_t>(255u, ((p >> 8) & 255) * 255 / a), b = std::min<uint32_t>(255u, (p & 255) * 255 / a);
     return a << 24 | r << 16 | g << 8 | b;
 }
 static Value bd_ctor(Act&, Value, int argc, Value* argv) {
@@ -422,6 +424,27 @@ static Value bd_fillRect(Act&, Value t, int argc, Value* argv) {
     if (bdUseGpu(b)) { gpuFill(b, x0, y0, x1, y1, c); return VUNDEF; }
     if (b->lazy && x0 == 0 && y0 == 0 && x1 == b->w && y1 == b->h) { b->lazyFill = c; b->dirty(0, 0, b->w, b->h); return VUNDEF; }
     b->ensurePx();
+#if defined(__PSP__) || defined(FL_LEAN)   // (FL_LEAN: tested on PC against Ruffle)
+    if (x0 == 0 && y0 == 0 && x1 == b->w && y1 == b->h && b->h <= 4096 && b->w < 65536) {
+        bool known = b->fillKnown && b->fillVal == c && (int)b->rowSpan.size() == b->h;
+        b->fillKnown = false;   // (dirty() below doesn't track spans)
+        if (known) {   // only what changed since the last clear
+            int dy0 = -1, dy1 = -1, dxa = b->w, dxb = 0;
+            for (int yy = 0; yy < b->h; yy++) {
+                uint32_t sp = b->rowSpan[yy]; int a = sp & 0xffff, e = sp >> 16;
+                if (e <= a) continue;
+                std::fill(b->px.begin() + (size_t)yy * b->w + a, b->px.begin() + (size_t)yy * b->w + e, c);
+                if (dy0 < 0) dy0 = yy; dy1 = yy + 1; dxa = std::min(dxa, a); dxb = std::max(dxb, e);
+            }
+            if (dy0 >= 0) b->dirty(dxa, dy0, dxb, dy1);
+        } else {
+            std::fill(b->px.begin(), b->px.end(), c);
+            b->dirty(0, 0, b->w, b->h);
+        }
+        b->rowSpan.assign(b->h, 0); b->fillKnown = true; b->fillVal = c;
+        return VUNDEF;
+    }
+#endif
     for (int yy = y0; yy < y1; yy++) std::fill(b->px.begin() + (size_t)yy * b->w + x0, b->px.begin() + (size_t)yy * b->w + x1, c);
     b->dirty(x0, y0, x1, y1); return VUNDEF;
 }
@@ -444,7 +467,7 @@ static Value bd_copyPixels(Act&, Value t, int argc, Value* argv) {
                 uint32_t sa = sp >> 24, ia = 255 - sa;
                 uint32_t r = ((sp >> 16) & 255) + ((dp >> 16) & 255) * ia / 255, g = ((sp >> 8) & 255) + ((dp >> 8) & 255) * ia / 255,
                          bb = (sp & 255) + (dp & 255) * ia / 255, a = sa + (dp >> 24) * ia / 255;
-                dp = std::min(a, 255u) << 24 | std::min(r, 255u) << 16 | std::min(g, 255u) << 8 | std::min(bb, 255u);
+                dp = std::min<uint32_t>(a, 255u) << 24 | std::min<uint32_t>(r, 255u) << 16 | std::min<uint32_t>(g, 255u) << 8 | std::min<uint32_t>(bb, 255u);
             } else dp = d->transparent ? sp : (sp | 0xff000000u);
         }
     }
@@ -650,8 +673,10 @@ static Value deser(const std::string& s, size_t& i, int depth) {
     }
 }
 static Object* g_so = nullptr;
+bool g_saveLocked = false;   // (GenesisConsole: nothing is written to the save while it is on)
 static Value so_flush(Act&, Value t, int, Value*) {
     if (!t.isObj()) return VFALSE;
+    if (g_saveLocked) return VTRUE;
     std::string o = "ISAACSO1"; ser(o, getProp(t.o, intern("data")), 0);
     if (g_savePath.empty()) return VFALSE;
     std::string tmp = g_savePath + ".tmp";

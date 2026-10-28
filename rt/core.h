@@ -29,6 +29,7 @@ struct GcObj {
     uint8_t marked = 0;
     uint8_t pinned = 0;     // never freed (interned strings, prototypes)
     uint8_t onHeap = 0;     // 0 = stack object (local scopes), not managed by the GC
+    uint8_t weakAtom = 0;   // interned string the GC may free (automatic instance names): pinned when scripts use it
     virtual ~GcObj() {}
     virtual void trace(Tracer&) {}
 };
@@ -59,7 +60,8 @@ struct Str final : GcObj {
 };
 Str* intern(std::string_view sv);
 Str* mkstr(std::string s);                  // dynamic string (not interned)
-inline Str* atomOf(Str* s) { if (s->interned) return s; if (!s->atom) s->atom = intern(s->s); return s->atom; }
+Str* internWeak(std::string_view sv);       // interned, but freed when nothing references it (until a script uses it as a key)
+inline Str* atomOf(Str* s) { if (s->interned) { if (s->weakAtom) { s->weakAtom = 0; s->pinned = 1; } return s; } if (!s->atom) s->atom = intern(s->s); return s->atom; }
 
 // ---------------------------------------------------------------- Values
 enum VT : uint8_t { T_UNDEF = 0, T_NULL, T_BOOL, T_NUM, T_STR, T_OBJ, T_HOLE };
@@ -96,7 +98,10 @@ struct PropMap {
     PropMap() {}
     PropMap(const PropMap&) = delete;
     ~PropMap() { delete[] tab; }
-    static inline uint32_t hp(Str* k) { uint64_t x = (uint64_t)(uintptr_t)k >> 4; x *= 0x9E3779B97F4A7C15ull; return (uint32_t)(x >> 32); }
+    static inline uint32_t hp(Str* k) {
+        if constexpr (sizeof(void*) == 4) { uint32_t x = ((uint32_t)(uintptr_t)k >> 4) * 0x9E3779B1u; return (x >> 16) | (x << 16); }   // (PSP: no 64-bit multiply)
+        else { uint64_t x = (uint64_t)(uintptr_t)k >> 4; x *= 0x9E3779B97F4A7C15ull; return (uint32_t)(x >> 32); }
+    }
     void rebuild() {
         uint32_t cap = 16; while (cap < v.size() * 3) cap <<= 1;
         delete[] tab; tab = new uint32_t[cap]; mask = cap - 1;
@@ -139,6 +144,7 @@ enum OK : uint8_t {
 };
 struct Object : GcObj {
     OK kind = OK_PLAIN;
+    uint8_t guarded = 0;   // writes to its properties go through g_writeGuard first (mods: GenesisConsole)
     Object* proto = nullptr;
     PropMap props;
     Object() {}
@@ -197,7 +203,11 @@ struct Act {
 
 // ---------------------------------------------------------------- VM stack (for for-in and && / ||)
 struct VMState {
+#ifdef __PSP__
+    Value stack[1 << 15];   // (PSP: 512 KB)
+#else
     Value stack[1 << 16];
+#endif
     Value* sp = stack;
     Object* global = nullptr;
     Scope* globalScope = nullptr;
@@ -220,8 +230,8 @@ inline bool truthy(const Value& v) {
         default: return false;
     }
 }
-int32_t toInt32(double d);
-inline int32_t toInt32(const Value& v) { return toInt32(toNum(v)); }
+int toInt32(double d);   // (int, not int32_t: on PSP int32_t is long)
+inline int toInt32(const Value& v) { return toInt32(toNum(v)); }
 Value toPrimitive(const Value& v);
 Object* toObject(const Value& v);   // primitives → Boxed; undefined/null → nullptr
 
@@ -245,12 +255,18 @@ inline Value toIntegerv(const Value& v) { return Value((double)toInt32(v)); }
 Value randomNumber(const Value& max);
 Value getTime();
 double randomDouble();   // [0,1)
+void rngSave(uint32_t* state, uint64_t* calls);   // (mods: side-effect-free calls into the game)
+void rngRestore(uint32_t state, uint64_t calls);
 Str* typeOf(const Value& v);
 
 // Properties
 Value getProp(Object* o, Str* k);                  // with prototype chain
 bool hasProp(Object* o, Str* k);
 void setProp(Object* o, Str* k, const Value& v);
+// Write guard (mods): for objects with `guarded` set, every property write (setProp, setMem*, setVar*) is first passed
+// to it. It may change the value; returning false drops the write. Null when no mod uses it.
+using WriteGuardFn = bool (*)(Object* o, Str* k, Value& v);
+extern WriteGuardFn g_writeGuard;
 Value getMem(const Value& obj, const Value& key);
 Value getMemK(const Value& obj, Str* k);
 void setMem(const Value& obj, const Value& key, const Value& v);

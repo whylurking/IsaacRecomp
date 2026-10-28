@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <string>
+#include <vector>
 #include <functional>
 namespace fl {
 // Memory limits: chosen at startup (platformInitLimits). On Switch they depend on the available memory:
@@ -19,6 +20,7 @@ struct Limits {
     int defaultCacheMB;        // maximum memory for atlas pages (16 MB each)
     double gcSweepMs;          // time per tick to free dead objects (lazy sweep)
     bool small;                // reduced profile
+    double gcGrowth = 2.0;     // a collection when the objects reach this times the (1.5 x) live ones of the last one
 };
 extern Limits g_lim;
 void platformInitLimits();
@@ -62,4 +64,6 @@ bool platformMkdir(const std::string& path);
 bool platformReplaceFile(const std::string& from, const std::string& to);
 bool platformFileExists(const std::string& path);
 bool platformCopyFile(const std::string& from, const std::string& to);
+// the files (not folders) in a folder; false if it doesn't exist
+bool platformListDir(const std::string& dir, std::vector<std::string>& names);
 }

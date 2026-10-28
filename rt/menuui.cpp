@@ -19,6 +19,7 @@
 #include "platform.h"
 
 namespace fl {
+extern std::vector<std::function<void(Tracer&)>> g_rootTracers;
 
 void visibleButtons(std::vector<ButtonObj*>& out);
 ButtonObj* topButtonAt(double x, double y);
@@ -119,6 +120,44 @@ static uint16_t handwritten(const char* text, float H, uint32_t argb, float* out
     s->layers.push_back(L);
     return g_synth[key] = addChar(s);
 }
+#include "menuui_caps.inc"
+// Any text in the same marker style (the mods' menu texts): capitals, digits and a few signs from kHandCaps; small
+// letters as small capitals (y from 0.36 down). H = cap height.
+static uint16_t handText(const std::string& text, float H, uint32_t argb, float* outW) {
+    char key[200]; snprintf(key, sizeof key, "H%s|%.1f|%08x", text.c_str(), H, argb);
+    const float sw = 0.17f * H, spacing = 0.15f, space = 0.34f;
+    auto cap = [](char c) -> const HandCap* { char u = (char)toupper((unsigned char)c); for (auto& g : kHandCaps) if (g.c == u) return &g; return nullptr; };
+    float x = 0;
+    for (char c : text) { const HandCap* g = cap(c); bool small = c >= 'a' && c <= 'z'; x += g ? (g->w * (small ? 0.78f : 1) + spacing) * H : space * H; }
+    if (outW) *outW = x;
+    auto it = g_synth.find(key); if (it != g_synth.end()) return it->second;
+    auto* s = new ShapeDef(); s->type = CH_SHAPE;
+    ShapeLayer L; LineStyle ls; ls.width = sw; ls.argb = argb; ls.startCap = ls.endCap = 0; ls.join = 0; ls.noClose = true;
+    L.lines.push_back(ls);
+    Path path; uint32_t seed = 11;
+    auto jitter = [&]() { seed = seed * 1103515245u + 12345u; return ((seed >> 16) % 1000 / 1000.0f - 0.5f) * 0.03f; };
+    x = 0;
+    for (char c : text) {
+        const HandCap* g = cap(c);
+        if (!g) { x += space * H; continue; }
+        bool small = c >= 'a' && c <= 'z';
+        float kx = small ? 0.78f : 1, ky = small ? 0.64f : 1, y0 = small ? 0.36f : 0;
+        float rot = jitter() * 1.2f, dy = jitter() * 0.6f;
+        bool start = true;
+        for (int i = 0; i < g->n; i++) {
+            float gx = g->pts[2 * i], gy = g->pts[2 * i + 1];
+            if (std::isnan(gx)) { start = true; continue; }
+            float py = y0 + gy * ky + jitter() + dy, px = gx * kx + jitter() + (py - 0.5f) * rot;
+            path.verbs.push_back(start ? 0 : 1); path.pts.push_back(x + px * H); path.pts.push_back(py * H);
+            start = false;
+        }
+        x += (g->w * kx + spacing) * H;
+    }
+    L.linePaths.push_back(path);
+    s->bounds = {-sw, -sw, x + sw, H + sw};
+    s->layers.push_back(L);
+    return g_synth[key] = addChar(s);
+}
 static DisplayObject* put(MovieClip* parent, uint16_t id, int depth, double x, double y, const char* name = nullptr) {
     if (!id) return nullptr;
     PlaceCmd pc; pc.hasMatrix = true; pc.m.tx = x; pc.m.ty = y;
@@ -131,6 +170,13 @@ static DisplayObject* putText(MovieClip* parent, int depth, double x, double y, 
     if (d && d->kind == OK_EDITTEXT) ((EditTextObj*)d)->setText(text);
     return d;
 }
+
+// (shared with the mods: mods.h)
+uint16_t synthAddChar(CharDef* d) { return addChar(d); }
+uint16_t synthRect(float w, float h, uint32_t argb) { return rectShape(w, h, argb); }
+uint16_t synthHandText(const std::string& text, float H, uint32_t argb, float* outW) { return handText(text, H, argb, outW); }
+uint16_t synthTextField(float w, float size, uint32_t argb, int align) { return textField(w, size, argb, align); }
+DisplayObject* synthPut(MovieClip* parent, uint16_t id, int depth, double x, double y, const char* name) { return put(parent, id, depth, x, y, name); }
 
 // ============================================================ "REBIND CONTROLS" on the Control options page
 // The options sheet (_root.paus: _root.pauss in the menus, _root.hud.paus during a run) shows "Control options" on
@@ -484,12 +530,26 @@ void menuUiTick(bool gameplay, bool inGame) {
     else if (g_ui && (g_ui->removed || !g_ui->parent)) { g_ui = nullptr; g_uiBuilt = -1; }   // (the game cleared _root: rebuild)
     g_focusShown = false; g_focusShow = nullptr;
     // the mouse over something clickable: the hand cursor (main.cpp)
+#ifdef __PSP__
+    g_hand = false;   // (no mouse)
+#else
     g_hand = !gameplay && !g_uiOpen && (topButtonAt(g_player.mouseX, g_player.mouseY) || labelHit(g_player.mouseX, g_player.mouseY));
+#endif
     if (gameplay && !g_uiOpen) { removeLabel(); return; }
     updateRebindLabel();
     if (!g_navOn || g_uiOpen) return;
+#ifdef __PSP__
+    // (PSP: finding the options takes several ms with emulated doubles: every 4th tick; meanwhile the last result.
+    // The objects it refers to are kept alive until then)
+    static std::vector<Cand> s_cs; static uint32_t s_csTick = 0; static bool s_moving = false, s_traced = false;
+    if (!s_traced) { s_traced = true; g_rootTracers.push_back([](Tracer& tr) { for (auto& c : s_cs) { tr.mark(c.d); tr.mark(c.show); } }); }
+    if (s_cs.empty() || g_player.tick - s_csTick >= 4 || g_player.tick < s_csTick) { s_cs = candidates(); s_csTick = g_player.tick; s_moving = screenMoving(s_cs); }
+    const std::vector<Cand>& cs = s_cs;
+    bool moving = s_moving;
+#else
     std::vector<Cand> cs = candidates();
     bool moving = screenMoving(cs);
+#endif
     // a press that sets the screen moving (the camera travelling to Stats and back, a sheet closing): nothing is
     // shown until it settles, instead of the old selection sliding away with it
     if (g_afterClick) {

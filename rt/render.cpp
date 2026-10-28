@@ -157,7 +157,7 @@ RenderConfig g_renderCfg;
 RenderStats g_rstats;
 Mat g_stageToWindow;
 static GLuint g_prog, g_progBlur, g_vao;
-static GLint u_tex, u_alphaTest, u_view, u_flip, ub_tex, ub_dir, ub_view, ub_flip;
+static GLint u_tex, u_alphaTest, u_view, u_flip, ub_tex, ub_dir, ub_view, ub_flip, u_colOn, u_colR, u_colG, u_colB;
 static int g_winW = 0, g_winH = 0;
 static int g_stencilLevel = 0;
 static uint32_t g_frameNo = 0;
@@ -222,15 +222,20 @@ void main() { vUV = aUV; vMul = aMul; vAdd = aAdd; gl_Position = vec4(aPos.x / u
 static const char* kFS = R"(#version 330 core
 in vec2 vUV; in vec4 vMul; in vec4 vAdd;
 uniform sampler2D uTex; uniform float uAlphaTest;
+uniform float uColOn; uniform vec3 uColR, uColG, uColB;   // RainbowVision: a colour matrix (rows), on the window only
 out vec4 frag;
+vec4 shade();
 void main() {
+    vec4 c = shade();
+    if (uColOn > 0.5 && uAlphaTest <= 0.0) c.rgb = clamp(vec3(dot(uColR, c.rgb), dot(uColG, c.rgb), dot(uColB, c.rgb)), 0.0, c.a);   // (premultiplied: linear, so the same)
+    frag = c;
+}
+vec4 shade() {
     vec4 c = texture(uTex, vUV);
-    if (uAlphaTest > 0.0) { if (c.a < 0.5) discard; frag = vec4(1.0); return; }
+    if (uAlphaTest > 0.0) { if (c.a < 0.5) discard; return vec4(1.0); }
     // (premultiplied: a transparent texel leaves the destination unchanged, no need to discard it)
-    if (vAdd == vec4(0.0) && vMul.r <= 1.0 && vMul.g <= 1.0 && vMul.b <= 1.0) {   // common case: no additive term
-        frag = vec4(c.rgb * vMul.rgb, c.a) * clamp(vMul.a, 0.0, 1.0);
-        return;
-    }
+    if (vAdd == vec4(0.0) && vMul.r <= 1.0 && vMul.g <= 1.0 && vMul.b <= 1.0)   // common case: no additive term
+        return vec4(c.rgb * vMul.rgb, c.a) * clamp(vMul.a, 0.0, 1.0);
     vec3 rgb = c.rgb / max(c.a, 1e-6);
     rgb = clamp(rgb * vMul.rgb + vAdd.rgb, 0.0, 1.0);
     float aadd = vAdd.a, inkA = 0.0;
@@ -246,7 +251,7 @@ void main() {
     }
     float a = clamp(c.a * vMul.a + aadd * c.a, 0.0, 1.0);
     a = mix(a, min(1.0, a * 3.0), inkA);
-    frag = vec4(rgb * a, a);
+    return vec4(rgb * a, a);
 }
 )";
 static const char* kBlurFS = R"(#version 330 core
@@ -423,6 +428,16 @@ static TexEntry* storeRaster(const TexKey& k, bool ok, Raster& r) {
 struct BmTex { GLuint tex = 0; int w = 0, h = 0; GLuint fbo = 0, rb = 0; };   // fbo: layer drawn on the GPU
 static std::unordered_map<uint32_t, BmTex> g_bm;
 static std::unordered_map<uint32_t, uint32_t> g_bmVer;   // content version of each bitmap texture (filter cache)
+// Where a GPU bitmap has anything drawn (bitmap pixels; known only for the bitmaps the game draws into and clears):
+// the game's full-room layers (blood, gibs, rocks' debris, shadows...) are mostly transparent, and drawing only their
+// used part saves a lot of fill rate (each one covered the whole screen every frame). Not in the map: unknown (all).
+struct BmBox { float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f; bool empty() const { return x1 <= x0 || y1 <= y0; } };
+static std::unordered_map<uint32_t, BmBox> g_bmBox;
+static void bmBoxAdd(uint32_t uid, float x0, float y0, float x1, float y1) {
+    auto it = g_bmBox.find(uid); if (it == g_bmBox.end()) return;   // (unknown stays unknown: the whole bitmap)
+    BmBox& b = it->second; b.x0 = std::min(b.x0, x0); b.y0 = std::min(b.y0, y0); b.x1 = std::max(b.x1, x1); b.y1 = std::max(b.y1, y1);
+}
+static bool g_sceneBoxOn = false; static BmBox g_sceneBox;   // (renderScene: what its quads cover)
 static std::vector<BmTex> g_bmPool;
 static BmTex acquireBm(int w, int h) {
     for (size_t i = 0; i < g_bmPool.size(); i++) if (g_bmPool[i].w == w && g_bmPool[i].h == h) { BmTex t = g_bmPool[i]; g_bmPool.erase(g_bmPool.begin() + i); return t; }
@@ -443,6 +458,7 @@ bool renderInit() {
     u_tex = glGetUniformLocation(g_prog, "uTex"); u_alphaTest = glGetUniformLocation(g_prog, "uAlphaTest"); u_view = glGetUniformLocation(g_prog, "uView");
     ub_tex = glGetUniformLocation(g_progBlur, "uTex"); ub_dir = glGetUniformLocation(g_progBlur, "uDir"); ub_view = glGetUniformLocation(g_progBlur, "uView");
     u_flip = glGetUniformLocation(g_prog, "uFlip"); ub_flip = glGetUniformLocation(g_progBlur, "uFlip");
+    u_colOn = glGetUniformLocation(g_prog, "uColOn"); u_colR = glGetUniformLocation(g_prog, "uColR"); u_colG = glGetUniformLocation(g_prog, "uColG"); u_colB = glGetUniformLocation(g_prog, "uColB");
     glUseProgram(g_progBlur); glUniform1f(ub_flip, 1.0f); glUseProgram(g_prog); glUniform1f(u_flip, 1.0f);
     glGenVertexArrays(1, &g_vao); glBindVertexArray(g_vao);
     g_vboRing.init(GL_ARRAY_BUFFER, kVboBytes, sizeof(Vtx) * 16);   // (offsets are multiples of the vertex size)
@@ -529,6 +545,16 @@ static void quad(GLuint tex, const Mat& m, double x0, double y0, double x1, doub
     float mr = cx.rm, mg = cx.gm, mb = cx.bm, ma = cx.am, ar = cx.ra / 255.f, ag = cx.ga / 255.f, ab = cx.ba / 255.f, aa = cx.aa / 255.f;
     double px[4], py[4];
     m.apply(x0, y0, px[0], py[0]); m.apply(x1, y0, px[1], py[1]); m.apply(x1, y1, px[2], py[2]); m.apply(x0, y1, px[3], py[3]);
+    static const bool qlog = getenv("ISAAC_QUADLOG") != nullptr;   // (testing) big quads
+    if (qlog) {   // (fill area clipped to the window, summed per frame)
+        double xa = std::min({px[0], px[1], px[2], px[3]}), xb = std::max({px[0], px[1], px[2], px[3]}), ya = std::min({py[0], py[1], py[2], py[3]}), yb = std::max({py[0], py[1], py[2], py[3]});
+        xa = std::max(0.0, xa); ya = std::max(0.0, ya); xb = std::min((double)g_winW, xb); yb = std::min((double)g_winH, yb);
+        extern double g_fillPx; if (xb > xa && yb > ya) g_fillPx += (xb - xa) * (yb - ya);
+    }
+    if (g_sceneBoxOn) for (int i = 0; i < 4; i++) {
+        g_sceneBox.x0 = std::min(g_sceneBox.x0, (float)px[i]); g_sceneBox.y0 = std::min(g_sceneBox.y0, (float)py[i]);
+        g_sceneBox.x1 = std::max(g_sceneBox.x1, (float)px[i]); g_sceneBox.y1 = std::max(g_sceneBox.y1, (float)py[i]);
+    }
     float us[4] = {u0, u1, u1, u0}, vs[4] = {v0, v0, v1, v1};
     int idx[6] = {0, 1, 2, 0, 2, 3};
     for (int i : idx) g_batch.push_back({(float)px[i], (float)py[i], us[i], vs[i], mr, mg, mb, ma, ar, ag, ab, aa});
@@ -544,7 +570,10 @@ struct RT { GLuint fbo = 0, tex = 0, rb = 0; int w = 0, h = 0; };
 static std::vector<RT> g_rtPool;
 // returns an intermediate texture of at least w x h (the smallest that fits): filters are processed one
 // after another and returned when done, so a couple per frame suffice even when there are many
+double g_fillPx = 0;
 static RT acquireRT(int w, int h, bool exact = false) {
+    static const bool qlog = getenv("ISAAC_QUADLOG") != nullptr;
+    if (qlog && (long)w * h > 3000000) logf("[rt] %dx%d\n", w, h);
     int best = -1;
     if (exact) for (size_t i = 0; i < g_rtPool.size(); i++) if (g_rtPool[i].w == w && g_rtPool[i].h == h) { best = (int)i; break; }
     if (!exact)
@@ -566,9 +595,18 @@ static void releaseRT(const RT& r) { g_rtPool.push_back(r); if (g_rtPool.size() 
     glrec([o] { glDeleteFramebuffers(1, &o.fbo); glDeleteTextures(1, &o.tex); glDeleteRenderbuffers(1, &o.rb); }); } }   // (after its last recorded use)
 struct Target { GLuint fbo; int w, h; float flip = 1.f; };
 static std::vector<Target> g_targets;
+// RainbowVision (mods/RainbowVision.mod): a colour matrix applied to what reaches the window (not to the layers
+// drawn off screen first: they reach the window afterwards). Set by the mod (logic thread), read here.
+extern std::atomic<bool> g_colorMatOn; extern float g_colorMat[9];   // (mod_rainbow.cpp)
 static void bindTarget(const Target& t) {
     flush();
-    glrec([t] { glBindFramebuffer(GL_FRAMEBUFFER, t.fbo); glViewport(0, 0, t.w, t.h); glUseProgram(g_prog); glUniform2f(u_view, (float)t.w, (float)t.h); glUniform1f(u_flip, t.flip); });
+    bool col = t.fbo == 0 && g_colorMatOn.load(std::memory_order_acquire);
+    float m[9]; memcpy(m, g_colorMat, sizeof m);
+    glrec([t, col, m] {
+        glBindFramebuffer(GL_FRAMEBUFFER, t.fbo); glViewport(0, 0, t.w, t.h); glUseProgram(g_prog); glUniform2f(u_view, (float)t.w, (float)t.h); glUniform1f(u_flip, t.flip);
+        glUniform1f(u_colOn, col ? 1.0f : 0.0f);
+        if (col) { glUniform3f(u_colR, m[0], m[1], m[2]); glUniform3f(u_colG, m[3], m[4], m[5]); glUniform3f(u_colB, m[6], m[7], m[8]); }
+    });
 }
 static bool g_recStencil = false, g_recScissor = false;   // recorded state (not GL's current state)
 
@@ -664,9 +702,10 @@ void renderAdopt(const SnapPtr& s) {
         if (!t.tex || t.w != up.w || t.h != up.h) { if (t.tex) releaseBm(t); t = acquireBm(up.w, up.h); }
         texUpload(t.tex, up.x0, up.y0, up.x1 - up.x0, up.y1 - up.y0, up.px.data(), up.x1 - up.x0);
         g_bmVer[up.uid]++;
+        bmBoxAdd(up.uid, (float)up.x0, (float)up.y0, (float)up.x1, (float)up.y1);
     }
     s->uploads.clear(); s->uploads.shrink_to_fit();
-    for (uint32_t uid : s->freedBitmaps) { auto it = g_bm.find(uid); if (it != g_bm.end()) { releaseBm(it->second); g_bm.erase(it); } }
+    for (uint32_t uid : s->freedBitmaps) { auto it = g_bm.find(uid); if (it != g_bm.end()) { releaseBm(it->second); g_bm.erase(it); } g_bmBox.erase(uid); }
     if (!s->indexed) {
         uint32_t cap = 16; while (cap < s->nodes.size() * 2) cap <<= 1;
         s->uidTable.assign(cap, 0); s->uidMask = cap - 1;
@@ -923,6 +962,30 @@ static void learnKey(const SnapNode& n, const TexKey& k, double scale) {
 std::vector<PreKey> renderTakeLearned() { std::vector<PreKey> v; v.swap(g_learnNew); return v; }
 void renderMarkKnown(const std::vector<PreKey>& keys) { for (auto& p : keys) g_learnSeen.emplace(preHash(p), true); }
 
+// A shape that is one solid axis-aligned rectangle (screen fades, dimming, plain panels) is drawn as a coloured quad,
+// not rasterized: the same picture at any size (WideSaac draws the screen-wide ones larger), no texture.
+struct PlainRect { bool plain = false; RectF r; uint32_t argb = 0; };
+static const bool g_noPlainRects = getenv("ISAAC_NOPLAINRECT") != nullptr;   // (testing)
+static const PlainRect& plainRectOf(const CharDef* d) {
+    static std::unordered_map<const CharDef*, PlainRect> cache;
+    auto it = cache.find(d); if (it != cache.end()) return it->second;
+    PlainRect pr;
+    if (d && d->type == CH_SHAPE) {
+        ShapeDef* sd = (ShapeDef*)d; shapeEnsure(sd);
+        if (sd->layers.size() == 1 && sd->layers[0].fills.size() == 1 && sd->layers[0].fills[0].type == 0 && sd->layers[0].fillPaths.size() == 1 &&
+            sd->layers[0].lines.empty()) {
+            const Path& p = sd->layers[0].fillPaths[0];
+            bool ok = !p.verbs.empty() && p.verbs[0] == 0 && p.verbs.size() <= 6;
+            for (size_t i = 1; ok && i < p.verbs.size(); i++) ok = p.verbs[i] == 1;
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (size_t i = 0; ok && i + 1 < p.pts.size(); i += 2) { x0 = std::min(x0, p.pts[i]); x1 = std::max(x1, p.pts[i]); y0 = std::min(y0, p.pts[i + 1]); y1 = std::max(y1, p.pts[i + 1]); }
+            for (size_t i = 0; ok && i + 1 < p.pts.size(); i += 2)   // every point on a corner
+                ok = (std::fabs(p.pts[i] - x0) < 0.01f || std::fabs(p.pts[i] - x1) < 0.01f) && (std::fabs(p.pts[i + 1] - y0) < 0.01f || std::fabs(p.pts[i + 1] - y1) < 0.01f);
+            if (ok && x1 > x0 && y1 > y0) { pr.plain = true; pr.r = {x0, y0, x1, y1}; pr.argb = sd->layers[0].fills[0].argb; }
+        }
+    }
+    return cache[d] = pr;
+}
 static void prerasterize() {
     rqStart();
     rqDrain(1.5);
@@ -930,6 +993,7 @@ static void prerasterize() {
     for (const Cmd& c : g_cmds) {
         if (c.op != C_LEAF) continue;
         const SnapNode& n = g_curSnap->nodes[c.node];
+        if (n.objKind == OK_SHAPE && !g_noPlainRects && plainRectOf(n.def).plain) continue;
         TexKey k; if (!texKeyOf(n, c.ratio, maxScale(c.m), k)) continue;
         if (g_cache.count(k)) continue;
         auto it = g_rqInflight.find(k);
@@ -1114,6 +1178,18 @@ static void execRange(size_t from, size_t to) {
         const Cmd& c = g_cmds[i];
         switch (c.op) {
             case C_LEAF: {
+                {
+                    const SnapNode& n = g_curSnap->nodes[c.node];
+                    const PlainRect& pr = n.objKind == OK_SHAPE ? plainRectOf(n.def) : PlainRect();
+                    if (pr.plain && !g_noPlainRects) {
+                        CX k = c.cx; uint32_t f = pr.argb;
+                        k.rm *= ((f >> 16) & 255) / 255.f; k.gm *= ((f >> 8) & 255) / 255.f; k.bm *= (f & 255) / 255.f; k.am *= (f >> 24) / 255.f;
+                        GLuint w = whiteTex();
+                        if (w != g_batchTex) { flush(); g_batchTex = w; }
+                        quad(w, g_off * c.m, pr.r.x0, pr.r.y0, pr.r.x1, pr.r.y1, k);
+                        break;
+                    }
+                }
                 TexEntry* e = rasterFor(c);
                 if (!e) break;
                 double inv = 1.0 / e->scale;
@@ -1128,8 +1204,17 @@ static void execRange(size_t from, size_t to) {
                 if (it == g_bm.end() || !it->second.tex || it->second.w != n.bmW || it->second.h != n.bmH) break;
                 GLuint t = it->second.tex;
                 Mat m = g_off * c.m;
+                float bx0 = 0, by0 = 0, bx1 = (float)n.bmW, by1 = (float)n.bmH;
+                static const bool noBox = getenv("ISAAC_NOBMBOX") != nullptr;   // (testing)
+                auto bb = noBox ? g_bmBox.end() : g_bmBox.find(n.bmUid);
+                if (bb != g_bmBox.end()) {   // only the part with something drawn (2 pixels more: filtering)
+                    if (bb->second.empty()) break;
+                    bx0 = std::max(0.f, std::floor(bb->second.x0) - 2); by0 = std::max(0.f, std::floor(bb->second.y0) - 2);
+                    bx1 = std::min((float)n.bmW, std::ceil(bb->second.x1) + 2); by1 = std::min((float)n.bmH, std::ceil(bb->second.y1) + 2);
+                    if (bx1 <= bx0 || by1 <= by0) break;
+                }
                 if (t != g_batchTex) { flush(); setSmooth(t, n.smoothing || maxScale(m) < 0.999); g_batchTex = t; }
-                quad(t, m, 0, 0, n.bmW, n.bmH, c.cx);
+                quad(t, m, bx0, by0, bx1, by1, c.cx, bx0 / n.bmW, by0 / n.bmH, bx1 / n.bmW, by1 / n.bmH);
                 break;
             }
             case C_SPUSH: {
@@ -1213,13 +1298,25 @@ static void renderScene(const SnapPtr& scene, const Mat& m, const CX& cx, uint32
     g_alpha = savedAlpha; g_renderCfg.rasterWaitMs = savedWait; g_rasterBudget = savedBudget;
 }
 static void runGpuOps(Snapshot& s) {
+    static const bool opLog = getenv("ISAAC_GPUOPLOG") != nullptr;   // (testing)
     for (GpuOp& op : s.gpuOps) {
+        Uint64 opT0 = SDL_GetPerformanceCounter();
+        struct OpLogEnd { bool on; Uint64 t0; const GpuOp& op; uint32_t tick; ~OpLogEnd() { if (on) logf("[gpuop] tick %u kind %d uid %u %dx%d %.2f ms\n", tick, (int)op.kind, op.uid, op.w, op.h, (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency()); } } opEnd{opLog, opT0, op, s.tick};
         if (g_frameOpen) submitFrame();   // (what was recorded earlier goes first)
         g_bmVer[op.uid]++;
         switch (op.kind) {
             case GpuOp::UPLOAD: {
                 BmTex& t = bmTarget(op.uid, op.w, op.h);
                 texUpload(t.tex, 0, 0, op.w, op.h, op.px.data(), op.w);
+                BmBox b;   // (where its pixels aren't transparent)
+                for (int y = 0; y < op.h; y++) {
+                    const uint32_t* row = op.px.data() + (size_t)y * op.w;
+                    int x0 = 0; while (x0 < op.w && !(row[x0] >> 24)) x0++;
+                    if (x0 == op.w) continue;
+                    int x1 = op.w - 1; while (x1 > x0 && !(row[x1] >> 24)) x1--;
+                    b.x0 = std::min(b.x0, (float)x0); b.x1 = std::max(b.x1, (float)x1 + 1); b.y0 = std::min(b.y0, (float)y); b.y1 = (float)y + 1;
+                }
+                g_bmBox[op.uid] = b;
                 break;
             }
             case GpuOp::FILL: {
@@ -1228,6 +1325,8 @@ static void runGpuOps(Snapshot& s) {
                 float a = (op.color >> 24) / 255.f, r = ((op.color >> 16) & 255) / 255.f, g = ((op.color >> 8) & 255) / 255.f, b = (op.color & 255) / 255.f;
                 int x0 = op.x0, y0 = op.y0, w = op.x1 - op.x0, h = op.y1 - op.y0;   // (texture row 0 = bitmap row 0)
                 glrec([=] { glEnable(GL_SCISSOR_TEST); glScissor(x0, y0, w, h); glClearColor(r, g, b, a); glClear(GL_COLOR_BUFFER_BIT); glDisable(GL_SCISSOR_TEST); });
+                if (a == 0 && x0 <= 0 && y0 <= 0 && op.x1 >= op.w && op.y1 >= op.h) g_bmBox[op.uid] = BmBox();   // (cleared: nothing)
+                else if (a > 0) bmBoxAdd(op.uid, (float)x0, (float)y0, (float)op.x1, (float)op.y1);
                 break;
             }
             case GpuOp::COPY: {
@@ -1240,6 +1339,7 @@ static void runGpuOps(Snapshot& s) {
                 if (!merge) glrec([] { glDisable(GL_BLEND); });
                 setSmooth(tmp, false);
                 Mat id; quad(tmp, id, op.x0, op.y0, op.x1, op.y1, CX());
+                bmBoxAdd(op.uid, (float)op.x0, (float)op.y0, (float)op.x1, (float)op.y1);
                 flush();
                 if (!merge) glrec([] { glEnable(GL_BLEND); });
                 submitFrame();
@@ -1252,9 +1352,13 @@ static void runGpuOps(Snapshot& s) {
                     BmTex& bt = g_bm[up.uid];
                     if (!bt.tex || bt.w != up.w || bt.h != up.h) { if (bt.tex) releaseBm(bt); bt = acquireBm(up.w, up.h); }
                     texUpload(bt.tex, up.x0, up.y0, up.x1 - up.x0, up.y1 - up.y0, up.px.data(), up.x1 - up.x0);
+                    bmBoxAdd(up.uid, (float)up.x0, (float)up.y0, (float)up.x1, (float)up.y1);
                 }
                 BmTex& t = bmTarget(op.uid, op.w, op.h);
+                g_sceneBoxOn = true; g_sceneBox = BmBox();
                 renderScene(op.scene, op.m, op.cx, op.uid, t);
+                g_sceneBoxOn = false;
+                if (!g_sceneBox.empty()) bmBoxAdd(op.uid, g_sceneBox.x0, g_sceneBox.y0, g_sceneBox.x1, g_sceneBox.y1);
                 break;
             }
         }
@@ -1336,32 +1440,7 @@ void renderLoadingScreen(int winW, int winH, float frac) {
 }
 
 // ============================================================ performance overlay (F3)
-struct Glyph { char c; const char* r[7]; };
-static const Glyph kFont[] = {
-    {'0', {" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### "}}, {'1', {"  #  ", " ##  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "}},
-    {'2', {" ### ", "#   #", "    #", "   # ", "  #  ", " #   ", "#####"}}, {'3', {"#####", "   # ", "  #  ", "   # ", "    #", "#   #", " ### "}},
-    {'4', {"   # ", "  ## ", " # # ", "#  # ", "#####", "   # ", "   # "}}, {'5', {"#####", "#    ", "#### ", "    #", "    #", "#   #", " ### "}},
-    {'6', {"  ## ", " #   ", "#    ", "#### ", "#   #", "#   #", " ### "}}, {'7', {"#####", "    #", "   # ", "  #  ", " #   ", " #   ", " #   "}},
-    {'8', {" ### ", "#   #", "#   #", " ### ", "#   #", "#   #", " ### "}}, {'9', {" ### ", "#   #", "#   #", " ####", "    #", "   # ", " ##  "}},
-    {'A', {" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"}}, {'B', {"#### ", "#   #", "#   #", "#### ", "#   #", "#   #", "#### "}},
-    {'C', {" ### ", "#   #", "#    ", "#    ", "#    ", "#   #", " ### "}}, {'D', {"#### ", "#   #", "#   #", "#   #", "#   #", "#   #", "#### "}},
-    {'E', {"#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#####"}}, {'F', {"#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#    "}},
-    {'G', {" ### ", "#   #", "#    ", "# ###", "#   #", "#   #", " ####"}}, {'H', {"#   #", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"}},
-    {'I', {" ### ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "}}, {'J', {"  ###", "   # ", "   # ", "   # ", "   # ", "#  # ", " ##  "}},
-    {'K', {"#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #"}}, {'L', {"#    ", "#    ", "#    ", "#    ", "#    ", "#    ", "#####"}},
-    {'M', {"#   #", "## ##", "# # #", "# # #", "#   #", "#   #", "#   #"}}, {'N', {"#   #", "#   #", "##  #", "# # #", "#  ##", "#   #", "#   #"}},
-    {'O', {" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "}}, {'P', {"#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    "}},
-    {'Q', {" ### ", "#   #", "#   #", "#   #", "# # #", "#  # ", " ## #"}}, {'R', {"#### ", "#   #", "#   #", "#### ", "# #  ", "#  # ", "#   #"}},
-    {'S', {" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### "}}, {'T', {"#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  "}},
-    {'U', {"#   #", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "}}, {'V', {"#   #", "#   #", "#   #", "#   #", "#   #", " # # ", "  #  "}},
-    {'W', {"#   #", "#   #", "#   #", "# # #", "# # #", "# # #", " # # "}}, {'X', {"#   #", "#   #", " # # ", "  #  ", " # # ", "#   #", "#   #"}},
-    {'Y', {"#   #", "#   #", " # # ", "  #  ", "  #  ", "  #  ", "  #  "}}, {'Z', {"#####", "    #", "   # ", "  #  ", " #   ", "#    ", "#####"}},
-    {'.', {"     ", "     ", "     ", "     ", "     ", " ##  ", " ##  "}}, {':', {"     ", " ##  ", " ##  ", "     ", " ##  ", " ##  ", "     "}},
-    {'/', {"    #", "    #", "   # ", "  #  ", " #   ", "#    ", "#    "}}, {'-', {"     ", "     ", "     ", "#####", "     ", "     ", "     "}},
-    {'(', {"   # ", "  #  ", " #   ", " #   ", " #   ", "  #  ", "   # "}}, {')', {" #   ", "  #  ", "   # ", "   # ", "   # ", "  #  ", " #   "}},
-    {'%', {"##   ", "##  #", "   # ", "  #  ", " #   ", "#  ##", "   ##"}}, {'=', {"     ", "     ", "#####", "     ", "#####", "     ", "     "}},
-    {'>', {" #   ", "  #  ", "   # ", "    #", "   # ", "  #  ", " #   "}}, {'+', {"     ", "  #  ", "  #  ", "#####", "  #  ", "  #  ", "     "}},
-};
+#include "font5x7.inc"
 // The text is drawn into a texture only when it changes (once per second) and painted with a single quad.
 // (Previously it was one quad per dot of each letter: thousands per frame, costing several ms on Switch.)
 static GLuint g_ovTex = 0; static int g_ovTW = 0, g_ovTH = 0, g_ovW = 0, g_ovH = 0, g_ovPx = 0;
@@ -1574,14 +1653,37 @@ void renderChooser(int winW, int winH, const std::string& title, const std::vect
 }
 
 // ============================================================ frame
+// The visible part of the stage (snapshot view, WideSaac): fitted to the window and centered. Changes are eased over
+// a few frames (pausing with Hyper Zoom shows the whole stage again). Default: the whole stage, letterboxed.
+static double g_viewCur[4] = {0, 0, 0, 0}; static bool g_viewClip = true; static Uint64 g_viewT = 0;
+static void updateView() {
+    double tgt[4] = {0, 0, (double)g_stageW, (double)g_stageH}; bool clip = true;
+    static const char* env = getenv("ISAAC_VIEW");   // (testing) "x0 y0 x1 y1 clip"
+    if (env) { int c = 1; sscanf(env, "%lf %lf %lf %lf %d", &tgt[0], &tgt[1], &tgt[2], &tgt[3], &c); clip = c != 0; }
+    else if (g_curSnap && g_curSnap->viewSet && g_curSnap->view[2] > g_curSnap->view[0] && g_curSnap->view[3] > g_curSnap->view[1]) {
+        for (int i = 0; i < 4; i++) tgt[i] = g_curSnap->view[i];
+        clip = g_curSnap->viewClip;
+    }
+    Uint64 now = SDL_GetPerformanceCounter();
+    double dt = g_viewT ? (double)(now - g_viewT) / SDL_GetPerformanceFrequency() : 1.0;
+    g_viewT = now;
+    if (g_viewCur[2] <= g_viewCur[0]) for (int i = 0; i < 4; i++) g_viewCur[i] = tgt[i];
+    double k = 1 - std::exp(-std::min(dt, 0.25) * 14), err = 0;
+    for (int i = 0; i < 4; i++) { g_viewCur[i] += (tgt[i] - g_viewCur[i]) * k; err = std::max(err, std::fabs(tgt[i] - g_viewCur[i])); }
+    if (err < 0.5) for (int i = 0; i < 4; i++) g_viewCur[i] = tgt[i];
+    g_viewClip = clip && err < 0.5;   // (while easing, nothing is cut)
+}
 Mat stageToWindowFor(int winW, int winH) {
-    double sc = std::min((double)winW / g_stageW, (double)winH / g_stageH);
-    Mat stage; stage.a = stage.d = sc; stage.tx = (winW - g_stageW * sc) / 2; stage.ty = (winH - g_stageH * sc) / 2;
+    double x0 = g_viewCur[0], y0 = g_viewCur[1], w = g_viewCur[2] - g_viewCur[0], h = g_viewCur[3] - g_viewCur[1];
+    if (!(w > 0 && h > 0)) { x0 = y0 = 0; w = g_stageW; h = g_stageH; }
+    double sc = std::min((double)winW / w, (double)winH / h);
+    Mat stage; stage.a = stage.d = sc; stage.tx = (winW - w * sc) / 2 - x0 * sc; stage.ty = (winH - h * sc) / 2 - y0 * sc;
     return stage;
 }
 void renderFrame(int winW, int winH, double alpha) {
     g_filterRecomputes = 0;
     g_frameNo++; g_winW = winW; g_winH = winH;
+    if (winH > 0) g_windowAspect = (float)winW / winH;
     g_alpha = g_renderCfg.smooth ? std::max(0.0, std::min(1.35, alpha)) : 1.0;
     g_rasterBudget = g_renderCfg.rasterPerFrame;
     if (g_frameOpen) renderEndFrame();   // (in case the caller didn't)
@@ -1598,16 +1700,32 @@ void renderFrame(int winW, int winH, double alpha) {
         glUniform1i(u_tex, 0); glUniform1f(u_alphaTest, 0.0f);
         glActiveTexture(GL_TEXTURE0);
     });
+    updateView();
     Mat stage = stageToWindowFor(winW, winH);
     g_stageToWindow = stage;
     if (!g_curSnap) return;
+    bool full = !g_viewClip || g_viewCur[0] != 0 || g_viewCur[1] != 0 || g_viewCur[2] != g_stageW || g_viewCur[3] != g_stageH;
+    // the area drawn: the whole stage (default), or the view (clipped) / the whole window (not clipped)
+    double ax0 = 0, ay0 = 0, ax1 = g_stageW, ay1 = g_stageH;
+    if (full) {
+        if (g_viewClip) { ax0 = g_viewCur[0]; ay0 = g_viewCur[1]; ax1 = g_viewCur[2]; ay1 = g_viewCur[3]; }
+        else { Mat inv; stage.invert(inv); inv.apply(0, 0, ax0, ay0); inv.apply(winW, winH, ax1, ay1); }
+    }
+    if (g_curSnap->viewCut && !getenv("ISAAC_VIEW")) {   // (black around it: the clear colour)
+        ax0 = std::max(ax0, (double)g_curSnap->cut[0]); ay0 = std::max(ay0, (double)g_curSnap->cut[1]);
+        ax1 = std::min(ax1, (double)g_curSnap->cut[2]); ay1 = std::min(ay1, (double)g_curSnap->cut[3]);
+        if (ax1 < ax0) ax1 = ax0;
+        if (ay1 < ay0) ay1 = ay0;
+    }
     {
-        uint32_t bg = g_curSnap->bgColor; CX c; c.rm = ((bg >> 16) & 255) / 255.f; c.gm = ((bg >> 8) & 255) / 255.f; c.bm = (bg & 255) / 255.f;
-        quad(whiteTex(), stage, 0, 0, g_stageW, g_stageH, c);
+        uint32_t bg = g_curSnap->viewCut ? 0 : g_curSnap->bgColor; CX c;   // (cut: black, like around it) c.rm = ((bg >> 16) & 255) / 255.f; c.gm = ((bg >> 8) & 255) / 255.f; c.bm = (bg & 255) / 255.f;
+        quad(whiteTex(), stage, ax0, ay0, ax1, ay1, c);
     }
     flush();
     {
-        int sx = (int)stage.tx, sy = (int)(winH - stage.ty - g_stageH * stage.d), sw = (int)std::ceil(g_stageW * stage.a), sh = (int)std::ceil(g_stageH * stage.a);
+        double wx0, wy0, wx1, wy1; stage.apply(ax0, ay0, wx0, wy0); stage.apply(ax1, ay1, wx1, wy1);
+        wx0 = std::max(0.0, wx0); wy0 = std::max(0.0, wy0); wx1 = std::min((double)winW, wx1); wy1 = std::min((double)winH, wy1);
+        int sx = (int)wx0, sy = (int)(winH - wy1), sw = (int)std::ceil(wx1 - wx0), sh = (int)std::ceil(wy1 - wy0);
         g_recScissor = true;
         glrec([sx, sy, sw, sh] { glEnable(GL_SCISSOR_TEST); glScissor(sx, sy, sw, sh); });
     }
@@ -1626,6 +1744,8 @@ void renderFrame(int winW, int winH, double alpha) {
     glrec([] { glDisable(GL_SCISSOR_TEST); });
     g_rstats.execMs += msSince(t0);
     g_batchTex = 0;
+    static const bool qlog = getenv("ISAAC_QUADLOG") != nullptr;
+    if (qlog) { static double tot = 0; static int n = 0; tot += g_fillPx; g_fillPx = 0; if (++n % 100 == 0) logf("[fill] %.1f window-areas per frame\n", tot / n / ((double)g_winW * g_winH)); }
 }
 
 void renderEndFrame() {

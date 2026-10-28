@@ -7,6 +7,7 @@
 #include <vector>
 #include "menuui.h"
 #include "controls.h"
+#include "mods.h"
 namespace fl {
 static Value evalPath(const std::string& p) {
     Value cur((Object*)vm.root);
@@ -21,8 +22,8 @@ static Value evalPath(const std::string& p) {
 }
 static void dumpTree(DisplayObject* d, int depth, int maxDepth) {
     if (depth > maxDepth) return;
-    logf("%*s[%d] %s id=%d kind=%d vis=%d x=%.1f y=%.1f sx=%.2f fr=%d/%d\n", depth * 2, "", d->depth, d->name ? d->name->s.c_str() : "-", d->charId, d->kind,
-         d->visible, d->m.tx, d->m.ty, d->sxP / 100.0, d->kind == OK_CLIP ? ((MovieClip*)d)->cur : 0, d->kind == OK_CLIP ? ((MovieClip*)d)->def->nframes : 0);
+    logf("%*s[%d] %s id=%d kind=%d vis=%d x=%.1f y=%.1f sx=%.2f fr=%d/%d clip=%d\n", depth * 2, "", d->depth, d->name ? d->name->s.c_str() : "-", d->charId, d->kind,
+         d->visible, d->m.tx, d->m.ty, d->sxP / 100.0, d->kind == OK_CLIP ? ((MovieClip*)d)->cur : 0, d->kind == OK_CLIP ? ((MovieClip*)d)->def->nframes : 0, d->clipDepth);
     if (d->kind == OK_CLIP) for (auto* k : ((MovieClip*)d)->kids) dumpTree(k, depth + 1, maxDepth);
 }
 bool g_autoAim = false;
@@ -51,6 +52,8 @@ int autoAimKey() {
     return dy > 0 ? 40 : 38;
 }
 void debugEval(const std::string& e) {
+    if (e == "wide minimap") { wideToggleMinimap(); logf("[wide] minimap %s\n", wideMinimapShown() ? "on" : "off"); return; }
+    if (e.compare(0, 8, "genesis ") == 0) { genesisDebug(e.substr(8)); return; }   // (GenesisConsole: open, type ..., a command)
     if (e.compare(0, 5, "call ") == 0) {   // call <path> <method> [numeric args...]
         std::istringstream ss(e.substr(5)); std::string path, method; ss >> path >> method;
         std::vector<Value> args; std::string a; while (ss >> a) { double n = strToNum(a); args.push_back(std::isnan(n) ? Value(mkstr(a)) : Value(n)); }
@@ -132,6 +135,31 @@ void debugEval(const std::string& e) {
                 // a dead clip reference that resolves to nothing is not an object (Ruffle's as_object)
                 if (b.isObj() && b.o->isDisplay() && ((DisplayObject*)b.o)->removed && !doResolveRemoved((DisplayObject*)b.o)) b = VUNDEF;
                 if (b.isObj()) for (const char* f : kF) {
+                    Value v = b; std::string fs = f; size_t p0 = 0;
+                    while (true) { size_t d = fs.find('.', p0); std::string part = fs.substr(p0, d == std::string::npos ? std::string::npos : d - p0);
+                        v = v.isObj() ? getMemK(v, intern(part)) : VUNDEF; if (d == std::string::npos) break; p0 = d + 1; }
+                    line += std::string(" ") + f + "=" + toStr(v)->s;
+                }
+                logf("%s\n", line.c_str());
+            }
+        }
+        return;
+    }
+    if (e.compare(0, 7, "bounds ") == 0) {   // bounds <path>: a display object's bounds in its parent's space
+        Value v = evalPath(e.substr(7));
+        if (v.isObj() && v.o->isDisplay()) { RectF r = localBounds((DisplayObject*)v.o); logf("[bounds] %s %.1f %.1f %.1f %.1f\n", e.substr(7).c_str(), r.x0, r.y0, r.x1, r.y1); }
+        return;
+    }
+    if (e == "pickups") {   // (testing) the pickups of the room: s 5 entries of _root.a.ball
+        static const char* kF[] = {"xp", "yp", "d._currentframe", "d.d._currentframe", "d.d.d._currentframe", "it", "col", "empty", "alt", "done", "dones"};
+        Value arr = evalPath("_root.a.ball");
+        if (arr.isObj() && arr.o->kind == OK_ARRAY) {
+            Array* a = (Array*)arr.o;
+            for (size_t i = 0; i < a->el.size(); i++) {
+                Value b = a->el[i];
+                if (!b.isObj() || toNum(getMemK(b, intern("s"))) != 5) continue;
+                std::string line = "[pickup] " + std::to_string(i) + ":";
+                for (const char* f : kF) {
                     Value v = b; std::string fs = f; size_t p0 = 0;
                     while (true) { size_t d = fs.find('.', p0); std::string part = fs.substr(p0, d == std::string::npos ? std::string::npos : d - p0);
                         v = v.isObj() ? getMemK(v, intern(part)) : VUNDEF; if (d == std::string::npos) break; p0 = d + 1; }

@@ -298,6 +298,7 @@ void doEnumChildren(DisplayObject* d, std::vector<Str*>& keys) {
 
 // ============================================================ Object creation
 MovieClip* newClip(SpriteDef* def) {
+    spriteEnsure(def);
     MovieClip* c = gcNew<MovieClip>();
     c->kind = OK_CLIP; c->proto = protos::movieclip; c->def = def; c->charId = def->id;
     return c;
@@ -350,7 +351,7 @@ void addToExec(MovieClip* c) {
 static void runFrameInternal(MovieClip* c, bool display, bool sounds);
 
 static void postInstantiateClip(MovieClip* c, bool runFrame, Object* init) {
-    if (!c->name) { char b[32]; snprintf(b, sizeof b, "instance%d", ++g_instanceCounter); if (c->parent) c->parent->renameChild(c, intern(b)); else c->name = intern(b); }
+    if (!c->name) { char b[32]; snprintf(b, sizeof b, "instance%d", ++g_instanceCounter); if (c->parent) c->parent->renameChild(c, internWeak(b)); else c->name = internWeak(b); }
     addToExec(c);
     if (runFrame) {
         // run_frame_avm1: Load event and advance to the first frame
@@ -954,6 +955,7 @@ static bool hitShape(DisplayObject* d, const Mat& world, double gx, double gy, b
         ShapeDef* s = (ShapeDef*)((ShapeObj*)d)->def;
         if (lx < s->bounds.x0 || lx > s->bounds.x1 || ly < s->bounds.y0 || ly > s->bounds.y1) return false;
         if (!shapeFlag) return true;
+        shapeEnsure(s);
         // global point in whole twips (as Ruffle), then local twips rounded
         double tgx = std::round(gx * 20.0) / 20.0, tgy = std::round(gy * 20.0) / 20.0;
         inv.apply(tgx, tgy, lx, ly);
@@ -969,7 +971,7 @@ static void hitDebugRec(DisplayObject* d, const Mat& world, double gx, double gy
     Mat inv; if (!world.invert(inv)) return;
     double lx, ly; inv.apply(gx, gy, lx, ly);
     if (d->kind == OK_SHAPE) {
-        ShapeDef* s = (ShapeDef*)((ShapeObj*)d)->def;
+        ShapeDef* s = (ShapeDef*)((ShapeObj*)d)->def; shapeEnsure(s);
         if (lx < s->bounds.x0 || lx > s->bounds.x1 || ly < s->bounds.y0 || ly > s->bounds.y1) return;
         logf("[hitdbg] %s shape %d local %.4f %.4f vis=%d poly=%d exact=%d\n", targetPath(d->parent)->s.c_str(), s->id, lx, ly, (int)d->visible,
              (int)pointInPolys(shapeHitPolys(s), lx, ly), (int)hitShape(d, world, gx, gy, true));

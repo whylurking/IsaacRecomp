@@ -92,6 +92,97 @@ Flash game's so.sol into IsaacRecomp's save file and back, for all three version
 without uploading anything. Close the game before replacing a save and keep a copy of
 the old one. (Converter originally made by g333nza.)
 
+MODS
+----
+Mods are small optional changes, kept as .mod files in the "mods" folder next to the
+program (Android: IsaacRecomp/mods; Switch: sd:/switch/isaac/mods; the program puts the
+mods that come with it there the first time). They are all off until you turn them on.
+Which mods are on, and their options, are in one plain text file: mods/mods.txt (the game
+writes it the first time it starts). Change it with any text editor: one [id] section
+per mod, "on = 1" (on) or "on = 0" (off), and the mod's options under it, each explained
+on the line above. Or open tools/mod_manager.html in a web browser (offline, nothing to
+install): flip the switches, change the options and save mods.txt, then put it in the
+mods folder in place of the old one (open your current mods.txt there first to start
+from it). Mods are read when the game starts; log.txt says which ones are on.
+Included:
+  StatOn (staton)     shows your stats on the left of the screen during a run, each with
+                      its symbol: speed, tears, damage, range, shot speed and luck (luck
+                      only in Wrath of the Lamb and Eternal Edition, the original game
+                      has none). When one changes, the difference appears next to it for
+                      a couple of seconds, green up and red down, as in Repentance.
+                      Below them, the chance that this floor's boss room opens the devil
+                      room and the angel room (the game's own formula: no damage taken,
+                      Pentagram, Book of Belial, earlier devil rooms...).
+                      Options in StatOn.mod (or in the mod manager): show_changes = 0
+                      hides the differences, show_deals = 0 the devil / angel chances,
+                      opacity = 10-100. It only reads the game: runs play exactly the
+                      same with it on.
+  GenesisConsole      a console to type commands during a run, like Rebirth's: give
+  (genesis)           items, spawn enemies, bosses, pickups, trinkets and cards, change
+                      your stats, hearts and pickups, god mode, open every door, go to
+                      any room or floor... Open it with the key above Tab, the
+                      controller's Back / Minus button or a three-finger tap; the game
+                      pauses while it is open. Type "help" for the commands; all of
+                      them are explained in tools/genesis_wiki.html.
+                      WHILE IT IS ON, NOTHING IS SAVED: no achievements, unlocks,
+                      statistics or collection (your save is left as it was).
+  WideSaac (widesaac) the whole screen on wide screens (16:9, 16:10, 21:9...) and any
+                      other shape: no black bars, the game's own background fills the
+                      sides, and the menus fill the whole screen (more of the menu's
+                      own sheet is shown, nothing is stretched); screen-wide shading
+                      (the pause screen, fades) covers the whole screen too. With Hyper Zoom (option hyper_zoom, a tick box in the mod
+                      manager) the room itself fills the screen while you play: the
+                      HUD band and the map go, and your hearts (top right), active
+                      item with its charges, coins / bombs / keys and pill or card are
+                      shown on the room's right side. It stays like that the whole
+                      run, also paused and on the death screen; a boss's "VS" intro,
+                      the cutscenes between floors and the endings are shown in the
+                      room's space, black on their sides: the zoom never changes. With Hyper Zoom, M (L3 on a controller, a four-finger tap
+                      on a touch screen) shows or hides Minimap+: the floor's map,
+                      larger and see-through, in the middle of the room (option
+                      minimap = 0: no map at all). It only changes what is drawn: runs
+                      play the same.
+  PillLog (pilllog)   pills you have already taken this run are known by sight: their
+                      effect is written over every pill of that colour in the room or
+                      for sale (green good, red bad), the banner says the effect when
+                      you pick one up instead of "Pills here!", and the pause screen
+                      lists the six pill colours of the run with what each does ("???"
+                      until taken). The names are the ones the game itself shows next
+                      to a pill you hold. Options: labels, banner, pause_list (1/0).
+  Itemnomicon        walk up to an item, a trinket or a card you can pick up or buy
+  (itemnomicon)      and a card over it says what it is: its name (in the colour of its
+                      quality, as Rebirth rates the same items: grey 0, white 1, blue
+                      2, violet 3, gold 4), passive or active (with its charges), the
+                      stats it changes (green up, red down) and what it does. The stat changes are the
+                      game's own, measured in each version (for Isaac with nothing
+                      else: some items stack differently). Options: range = 0.5-4
+                      tiles (1: next to it), opacity = 30-100. Both only read the
+                      game: runs play the same with them on.
+  BaseTime (basetime) speedrun timers, left of the map (with Hyper Zoom, at the room's
+                      bottom left): the game time (mm:ss, while you can move: it stops
+                      while paused, in cutscenes and while loading) and below it the
+                      total time (mm:ss:mmm, everything since the run started). The
+                      main menu shows, on a note of its own, your best game time - the
+                      fastest run to your furthest ending: Mom, then Mom's Heart, then
+                      Isaac or Satan, then The Chest - and below it your last run's
+                      total time, with "win" (it reached an ending) or "died". Kept in
+                      saves/basetime.txt. It only reads the game.
+  The Gone (thegone)  a new character, like Rebirth's The Lost: on the character select
+                      screen, one more place after the last character, with his own
+                      card like the others' (name, stats, starting item). A pale Isaac
+                      (3.5 damage, Isaac's speed)
+                      who starts with Spirit of the Night (the original game, which
+                      doesn't have it: Transcendence and the Ouija Board) and has no
+                      hearts: he can't pick up hearts, gain heart containers or extra
+                      lives, and one hit kills him. In a devil room he can take one
+                      deal for free; then the other deals disappear. "Random" can
+                      pick him too.
+  RainbowVision       colours for colour-blind players: the whole picture is
+  (rainbowvision)     recoloured so colours you can't tell apart look different
+                      (hearts, pills, enemies). Option type = deuteranopia (green-
+                      blind, the most common), protanopia (red-blind) or tritanopia
+                      (blue-blind); strength = 0-100. Only the colours on screen change.
+
 THE isaac.ini FILE
 ------------------
 Created automatically next to the executable the first time you run it.
@@ -126,6 +217,7 @@ Created automatically next to the executable the first time you run it.
                       speed depends on how far you push it, from 40% just past the
                       dead zone to full speed at 3/4 of the way (never faster than the
                       original). 0 = always full speed, as in the original game
+  mods =              the mods that are on, used only until mods/mods.txt exists (see MODS)
 
 IF YOU NOTICE STUTTERING OR SLOWDOWNS: F3
 -----------------------------------------
@@ -193,6 +285,48 @@ starts, the saves found there are copied to the "saves" folder (the old ones are
 The same folder also holds preload.txt / preload_og.txt / preload_eternal.txt
 (graphics learned on this machine), screenshots and performance.txt.
 Saves from the Flash game can be converted with tools/save_converter.html (see above).
+
+CHANGES IN VERSION 15 (v1.5.0 public release numbering)
+--------------------------------------------------------
+- Mods: a "mods" folder next to the program, a mod manager (tools/mod_manager.html) to
+  turn them on and off and change their options, and the first eight mods (see MODS), off
+  unless turned on:
+  - StatOn: your stats on the left of the screen during a run, with their symbols, as in
+    Repentance, and the chances of a devil room and an angel room on this floor.
+  - GenesisConsole: a console to give items, spawn anything, change your stats, god mode,
+    teleport... (tools/genesis_wiki.html explains it all). Nothing is saved while it is on.
+  - WideSaac: the whole screen on wide screens, and Hyper Zoom: the room fills the screen
+    while you play, with the HUD on its right side and Minimap+ on M / L3 / four fingers.
+  - PillLog: the effect of the pills you already know, written over them, in the pickup
+    banner and in a list on the pause screen.
+  - Itemnomicon: over items, trinkets and cards near you, their quality, stats and
+    what they do.
+  - BaseTime: speedrun timers (game time and total time), and on the menu your best time
+    to your furthest ending and your last run.
+  - The Gone: a new character, in the spirit of The Lost: no hearts, one hit and he dies.
+  - RainbowVision: colours for colour-blind players (protanopia, deuteranopia, tritanopia).
+- Touch screens: GenesisConsole's three-finger tap and Minimap+'s four-finger tap count
+  only when the fingers touch the screen together, not when you tap while holding a stick.
+- Faster drawing (all games, above all on Switch): the game's big see-through layers
+  (blood, debris, shadows) are drawn only where they have something, and plain
+  rectangles (fades, dimming) are drawn directly instead of as pictures.
+- Switch: video capture (holding the Capture button) is asked for, for host games whose
+  setting needs it.
+- A mod that comes with the program is updated when a newer version of it comes with a
+  newer program; your options are kept (except one whose meaning changed).
+- Boss music: after a boss that splits when it dies (Duke of Flies...), the boss theme
+  started again and no "boss defeated" music played when the last fly died. The room
+  must now stay empty for a moment before the music changes.
+- Less input lag and smoother motion: each game tick is now timed to arrive just before
+  the screen draws a new image (60 / 120 Hz screens), so what you press shows up as soon
+  as possible and no image has to guess where things are (fewer "HELD" frames in
+  performance.txt).
+- Texts that change all the time (BaseTime's timers) no longer make the game stutter, above
+  all on Switch: a text that was already drawn is reused instead of drawn again.
+- mods/mods.txt: which mods are on and their options, in one text file the game writes
+  and reads (tools/mod_manager.html makes it too, without opening any folder).
+- Slightly lower memory use and faster variable lookups in the game's code (on every
+  platform; runs play exactly the same).
 
 CHANGES IN VERSION 14 (v1.4.0 public release numbering)
 --------------------------------------------------------

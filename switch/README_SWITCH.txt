@@ -1,4 +1,4 @@
-THE BINDING OF ISAAC — native port for Nintendo Switch (homebrew) — version 1.4.0
+THE BINDING OF ISAAC — native port for Nintendo Switch (homebrew) — version 1.5.0
 =================================================================================
 
 All three versions of the Flash game on Steam are supported: the original, Wrath of the
@@ -104,7 +104,7 @@ FILES IN sd:/switch/isaac/
   Isaac*.exe            the Steam game (you provide it; one per version)
   isaac.ini             settings (volume, smooth = 0 for the original 30 fps,
                         game = og/wotl/eternal, low_latency, touch_controls,
-                        joystick_acceleration, gc_after_tick, max_margin...)
+                        joystick_acceleration, gc_after_tick, max_margin, mods...)
   log.txt               program messages from the last session
   saves/                your progress and the files the game learns on this console:
     isaac_save.sol        the Wrath of the Lamb save (isaac_og_save.sol for the original,
@@ -113,11 +113,45 @@ FILES IN sd:/switch/isaac/
     performance.txt       performance data (only if you turned on L3 + R3)
     preload*.txt          graphics seen on this console that weren't in the included list
                           (preloaded next time; safe to delete)
+  mods/                 the mods (.mod files), all off until you turn them on (below)
   tools/                save_converter.html: converts saves from the Flash game (open it
                         on a PC or phone browser), as in the PC version
+                        mod_manager.html: turns mods on and off
+                        genesis_wiki.html: what GenesisConsole can do
 Up to version 1.3.1 the saves were directly in sd:/switch/isaac/. Version 1.4.0 copies
 them into saves/ the first time it starts; the old files are left where they were (you
 can delete them once you've checked your progress is there).
+
+MODS
+----
+Mods are small optional changes in sd:/switch/isaac/mods/, all off until you turn them on.
+Which mods are on, and their options, are in sd:/switch/isaac/mods/mods.txt (written
+the first time the game starts): change "on = 0" to "on = 1" for the ones you want, with
+any text editor. Or, on a PC or phone, open tools/mod_manager.html in a browser, choose,
+save mods.txt and copy it to sd:/switch/isaac/mods/ (replacing the old one).
+  StatOn          your stats on the left of the screen during a run (speed, tears, damage,
+                  range, shot speed, luck) and the chance of a devil / angel room, as in
+                  Repentance.
+  GenesisConsole  a console to give items, spawn anything, change stats, god mode,
+                  teleport... Minus opens it during a run; A shows the keyboard (what you
+                  type runs when you press OK), X runs the line again, Y completes it,
+                  the D-pad recalls earlier commands, B or Minus close it. In handheld
+                  mode, a tap with three fingers opens / closes it too. Everything it can
+                  do: tools/genesis_wiki.html. While it is on, NOTHING IS SAVED (no
+                  unlocks, achievements or statistics; your save is left as it was).
+  WideSaac        no black bars at the sides of the screen; with Hyper Zoom
+                  (hyper_zoom = 1) the room fills the screen while you play, with the
+                  hearts, active item, coins / bombs / keys on its right side. L3
+                  (click the left stick; a four-finger tap in handheld mode) shows or
+                  hides Minimap+, the map larger and see-through in the middle.
+  PillLog         the effect of pills you already took this run, written over them, in
+                  the pickup banner and in a list on the pause screen.
+  Itemnomicon    walk up to an item, trinket or card and a card over it shows its
+                  name, the stats it changes and what it does.
+  BaseTime        speedrun timers (this floor, and the whole run with milliseconds);
+                  your last and best times on the main menu.
+  The Gone        a new character (like Rebirth's The Lost) after the last one on the
+                  character select screen: no hearts, one hit and he dies.
 
 IF SOMETHING GOES WRONG
 -----------------------

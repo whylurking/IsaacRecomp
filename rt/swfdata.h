@@ -27,6 +27,17 @@ struct Mat {
     }
     bool operator==(const Mat& o) const { return a == o.a && b == o.b && c == o.c && d == o.d && tx == o.tx && ty == o.ty; }
 };
+// Pixel order in memory (SWF bitmaps, BitmapData, rasterized shapes): 0xAARRGGBB, except on the PSP, where it is
+// 0xAABBGGRR, the GE's texture format: what is drawn on the CPU is used as a texture without a converted copy.
+// Values that scripts see (getPixel, fillRect colours...) are always ARGB: pxFromArgb / pxToArgb at the boundary.
+#ifdef __PSP__
+constexpr bool kPxABGR = true;
+#else
+constexpr bool kPxABGR = false;
+#endif
+inline uint32_t pxSwapRB(uint32_t v) { return (v & 0xff00ff00u) | ((v >> 16) & 0xffu) | ((v & 0xffu) << 16); }
+inline uint32_t pxFromArgb(uint32_t v) { return kPxABGR ? pxSwapRB(v) : v; }
+inline uint32_t pxToArgb(uint32_t v) { return kPxABGR ? pxSwapRB(v) : v; }
 struct CX {   // color transform: mult (1 = 256/256) and add (0..255)
     float rm = 1, gm = 1, bm = 1, am = 1, ra = 0, ga = 0, ba = 0, aa = 0;
     CX operator*(const CX& c) const {   // this ∘ c (c first, then this)
@@ -82,7 +93,15 @@ struct ShapeDef : CharDef {
     std::vector<std::vector<float>> hitPolys;   // flattened polygons (for hitTest), per fill; see shapeHitPolys
     bool hitBuilt = false;
     std::vector<HitEdge> hitEdges;
+    // lean loading (g_leanSwf, PSP): the records are parsed when first needed (shapeEnsure) and may be dropped
+    // again to save memory; raw points at the DefineShape body (after the id) in the movie data
+    const uint8_t* raw = nullptr; uint32_t rawLen = 0; uint16_t rawTag = 0; uint32_t rawOff = 0;   // (raw null: rawLen bytes at rawOff in the SWF cache file)
+    bool parsed = true, pinned = false; uint32_t lastUse = 0; uint32_t parsedBytes = 0;
 };
+// lean loading: parses the shape's records if they aren't in memory (no-op otherwise). Call before using
+// layers / hitEdges / hitPolys.
+void shapeEnsure(ShapeDef* s);
+extern bool g_leanSwf;
 
 // ---- Morph: paired edges
 struct MorphEdge { uint8_t kind; float x0[2], y0[2], cx[2], cy[2], x1[2], y1[2]; int fill0, fill1, line; bool newPath; };
@@ -108,7 +127,15 @@ struct SoundDef : CharDef {
     uint32_t samples = 0;
     const uint8_t* data = nullptr; size_t size = 0;   // MP3 data (after SeekSamples)
     int seek = 0;
+    uint32_t fileOff = 0;   // lean loading: data stays in the SWF cache file (data == nullptr), see soundBytes
 };
+// lean loading: the MP3 bytes of a sound / of a timeline stream (read from the SWF cache file into a small cache
+// when needed; the caller keeps the pointer while it plays)
+struct StreamInfo;
+std::shared_ptr<const std::vector<uint8_t>> soundBytes(SoundDef* s);
+std::shared_ptr<const std::vector<uint8_t>> streamBytes(StreamInfo* st);
+// lean loading: folder for the decompressed SWF (written the first time a game is loaded)
+extern std::string g_leanCacheDir;
 
 // ---- Filters
 struct Filter { uint8_t type = 1; float blurX = 4, blurY = 4; int passes = 1; uint32_t color = 0; float strength = 1;
@@ -133,7 +160,9 @@ struct FrameCmd {
     std::vector<std::array<uint32_t, 3>> envelope;   // SOUND: SoundInfo envelope (position at 44.1 kHz, left, right 0..32768)
 };
 struct StreamInfo {
-    std::vector<uint8_t> mp3;            // all blocks concatenated
+    std::vector<uint8_t> mp3;            // all blocks concatenated (lean loading: filled from fileBlocks when played)
+    std::vector<std::array<uint32_t, 2>> fileBlocks;   // lean loading: (offset in the SWF cache file, length) per block
+    uint32_t leanSize = 0;
     std::vector<uint32_t> frameSample;   // starting sample per frame (0-based index)
     std::vector<int32_t> frameBlock;     // -1 if the frame has no block
     int rate = 44100; bool stereo = false;
@@ -145,7 +174,9 @@ struct SpriteDef : CharDef {
     std::unordered_map<std::string, int> labels;   // label → frame (1-based)
     std::unique_ptr<StreamInfo> stream;
     Str* exportName = nullptr;
+    const uint8_t* tlData = nullptr; size_t tlBeg = 0, tlEnd = 0;   // lean loading: timeline not parsed yet (spriteEnsure)
 };
+void spriteEnsure(SpriteDef* sp);   // parses a lean-loaded sprite's timeline (first instance)
 
 // ---- Buttons
 struct ButtonRecord { uint8_t states; uint16_t id, depth; Mat m; CX cx; std::vector<Filter> filters; };
@@ -199,7 +230,7 @@ struct GameCode {
 };
 extern const GameCode* g_code;                       // the one for the loaded game (chosen by main at startup)
 extern int g_stageW, g_stageH; extern float g_frameRate;
-struct KnownGame { const GameCode* code; const char* tag; uint32_t swfLen; uint32_t crc; };
+struct KnownGame { const GameCode* code; const char* tag; uint32_t swfLen; uint32_t crc; const char* title; };   // code: null if this binary doesn't carry it (PSP: one game per binary)
 extern const KnownGame* g_game;                      // loaded version (tag: "og", "wotl", "eternal")
 extern bool g_gameExact;                             // the SWF matches the Steam one byte for byte
 const KnownGame* knownGames(int* n);

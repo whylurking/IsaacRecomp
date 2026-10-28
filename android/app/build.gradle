@@ -8,8 +8,8 @@ android {
         applicationId 'io.github.isaacrecomp'
         minSdkVersion 24
         targetSdkVersion 34
-        versionCode 140
-        versionName '1.4.0'
+        versionCode 150
+        versionName '1.5.0'
         externalNativeBuild {
             cmake {
                 // the whole native program (runtime + recompiled game + SDL2) comes from the repository's CMakeLists.txt

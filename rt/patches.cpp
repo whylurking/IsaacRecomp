@@ -2,6 +2,7 @@
 //  - "mdm" object (Steam's Zinc wrapper): quitting the game and fullscreen actually work;
 //  - options menu without the options that depended on Zinc/Flash and do nothing here.
 #include "display.h"
+#include "mods.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,7 +30,7 @@ static std::vector<SubPath> splitPath(const Path& p) {
 }
 void debugShapeSubpaths(uint16_t id) {
     CharDef* cd = g_movie.get(id); if (!cd || cd->type != CH_SHAPE) return;
-    ShapeDef* s = (ShapeDef*)cd;
+    ShapeDef* s = (ShapeDef*)cd; shapeEnsure(s); s->pinned = true;   // (lean loading: patched shapes stay parsed)
     if (getenv("ISAAC_POLYDUMP")) {   // (testing) the hit-test polygons, for analysis
         for (auto& poly : shapeHitPolys(s)) { std::string o = "[poly]"; for (float v : poly) { char b[32]; snprintf(b, sizeof b, " %g", v); o += b; } logf("%s\n", o.c_str()); }
     }
@@ -92,6 +93,55 @@ static void installMoveScale() {
     g_dirkeyOrig = (Function*)f.o;
     setMemK(clip, name, Value((Object*)g_dirkeyWrap));
 }
+// ---- boss music: the music code (_root.soundfra) switches from the boss theme to the "boss defeated" jingle the
+// first frame the room has no enemies left (_root.a.ashut == 0), and does it only once per room (bossmusic = 2).
+// A boss that splits when it dies (Duke of Flies, Lord of the Flies, ...) leaves the room empty for one frame
+// before its spawn is counted: the theme faded out and started again, and when the spawn died no jingle played.
+// The wrapper hides that gap from the music code: the room must stay empty for a few frames first.
+static Function* g_soundfraOrig = nullptr;
+static Function* g_soundfraWrap = nullptr;
+static int g_emptyFrames = 0;
+static Value soundfraWrap(Act& a, Value thisv, int argc, Value* argv) {
+    Value root((Object*)vm.root);
+    static Str* sA = intern("a"); static Str* sShut = intern("ashut"); static Str* sBoss = intern("bossmusic");
+    Value clip = getMemK(root, sA), shut = clip.isObj() ? getMemK(clip, sShut) : VUNDEF;
+    bool empty = shut.t == T_NUM && shut.n == 0;
+    g_emptyFrames = empty ? g_emptyFrames + 1 : 0;
+    Value bm = getMemK(root, sBoss);
+    bool hold = empty && g_emptyFrames < 3 && truthy(bm) && !(bm.t == T_NUM && bm.n == 2);
+    if (hold) setMemK(clip, sShut, Value(1.0));
+    Value r = g_soundfraOrig ? callValue(a, Value((Object*)g_soundfraOrig), thisv, argc, argv) : VUNDEF;
+    if (hold) { Value now = getMemK(clip, sShut); if (now.t == T_NUM && now.n == 1) setMemK(clip, sShut, Value(0.0)); }
+    return r;
+}
+static void installBossMusic() {
+    static Str* name = intern("soundfra");
+    Value root((Object*)vm.root);
+    Value f = getMemK(root, name);
+    if (!f.isObj() || f.o->kind != OK_FUNCTION || f.o == (Object*)g_soundfraWrap) return;
+    if (!g_soundfraWrap) {
+        g_soundfraWrap = gcNew<Function>(); g_soundfraWrap->proto = protos::function; g_soundfraWrap->nat = soundfraWrap; g_soundfraWrap->dbgName = "soundfra (boss music)"; gcPin(g_soundfraWrap);
+        gcAddRoot((GcObj**)&g_soundfraOrig);
+    }
+    g_soundfraOrig = (Function*)f.o;
+    setMemK(root, name, Value((Object*)g_soundfraWrap));
+}
+// (testing) ISAAC_SPLATLOG: who calls the game's splater() (blood drawn into the floor's bitmap)
+static Function* g_splOrig = nullptr; static Function* g_splWrap = nullptr;
+static Value splWrap(Act& a, Value thisv, int argc, Value* argv) {
+    Value clip = getMemK(Value((Object*)vm.root), intern("a")), trg = getMemK(clip, intern("trg"));
+    static const bool skip = getenv("ISAAC_SPLATSKIP") != nullptr; if (skip) return VUNDEF;
+    logf("[splat] tick %u trg.s=%g trg.spl=%g xp=%g yp=%g\n", g_player.tick, toNum(getMemK(trg, intern("s"))), toNum(getMemK(trg, intern("spl"))), toNum(getMemK(trg, intern("xp"))), toNum(getMemK(trg, intern("yp"))));
+    return g_splOrig ? callValue(a, Value((Object*)g_splOrig), thisv, argc, argv) : VUNDEF;
+}
+static void installSplatLog() {
+    static const bool on = getenv("ISAAC_SPLATLOG") || getenv("ISAAC_SPLATSKIP"); if (!on) return;
+    Value clip = getMemK(Value((Object*)vm.root), intern("a")); if (!clip.isObj()) return;
+    Value f = getMemK(clip, intern("splater"));
+    if (!f.isObj() || f.o->kind != OK_FUNCTION || f.o == (Object*)g_splWrap) return;
+    if (!g_splWrap) { g_splWrap = gcNew<Function>(); g_splWrap->proto = protos::function; g_splWrap->nat = splWrap; gcPin(g_splWrap); gcAddRoot((GcObj**)&g_splOrig); }
+    g_splOrig = (Function*)f.o; setMemK(clip, intern("splater"), Value((Object*)g_splWrap));
+}
 Value mdmFull(Act&, Value, int argc, Value* argv) {
     // at startup the game applies its saved setting: isaac.ini's takes precedence (and is synced in recompPatchesTick)
     if (g_fsSynced) { g_fullscreenRequest = argc > 0 && truthy(argv[0]) ? 1 : 0; if (g_trace) logf("[mdm] showFullScreen(%d)\n", g_fullscreenRequest.load()); }
@@ -119,7 +169,7 @@ static const GameIds* ids() {
 static const float kFullDy = -60, kMuteDy = -40;
 static void patchOptionsShape() {
     CharDef* cd = g_movie.get(ids()->optLabels); if (!cd || cd->type != CH_SHAPE) return;
-    ShapeDef* s = (ShapeDef*)cd;
+    ShapeDef* s = (ShapeDef*)cd; shapeEnsure(s); s->pinned = true;   // (lean loading: patched shapes stay parsed)
     for (auto& L : s->layers) for (auto& P : L.fillPaths) {
         if (P.empty()) continue;
         Path out;
@@ -139,7 +189,7 @@ static void patchOptionsShape() {
 // the note "(press F anytime to change to full)" is in shape 1253 (fill 2): it moves up with its row
 static void patchOptionsNote() {
     CharDef* cd = g_movie.get(ids()->optNote); if (!cd || cd->type != CH_SHAPE) return;
-    ShapeDef* s = (ShapeDef*)cd;
+    ShapeDef* s = (ShapeDef*)cd; shapeEnsure(s); s->pinned = true;   // (lean loading: patched shapes stay parsed)
     if (s->layers.empty() || s->layers[0].fillPaths.size() < 3) return;
     Path& P = s->layers[0].fillPaths[2];
     for (auto& sp : splitPath(P))
@@ -151,7 +201,7 @@ static void patchOptionsNote() {
 // supports controllers directly
 static void patchControlsShape() {
     CharDef* cd = g_movie.get(ids()->controls); if (!cd || cd->type != CH_SHAPE) return;
-    ShapeDef* s = (ShapeDef*)cd;
+    ShapeDef* s = (ShapeDef*)cd; shapeEnsure(s); s->pinned = true;   // (lean loading: patched shapes stay parsed)
     for (size_t l = 0; l < s->layers.size() && l < 2; l++) for (auto& P : s->layers[l].fillPaths) {
         if (P.empty()) continue;
         Path out;
@@ -185,6 +235,8 @@ static void tweakOptions(MovieClip* p) {
 void recompPatchesTick() {
     Value root((Object*)vm.root);
     installMoveScale();
+    installBossMusic();
+    installSplatLog();
     if (!g_fsSynced && g_player.tick >= 2) {   // the menu's "FullScreen" checkbox reflects the actual state
         Value so = getMemK(root, intern("so"));
         Value data = so.isObj() ? getMemK(so, intern("data")) : VUNDEF;
@@ -225,6 +277,19 @@ int recompTouchTargets(float out[4][4]) {
         return r.valid();
     };
     RectF r; double pad = g_stageW / 120.0;   // (~1% of the stage width)
+    // WideSaac's Hyper Zoom draws some HUD pieces elsewhere: their touch areas follow (stage -> HUD -> moved -> stage)
+    Mat hudW = worldMatrix((DisplayObject*)hud.o), hudInv; hudW.invert(hudInv);
+    auto moved = [&](int group, RectF& rr) {
+        Mat mv; if (!wideHudMove(group, mv)) return;
+        Mat t = hudW * mv * hudInv;
+        double xs[2] = {rr.x0, rr.x1}, ys[2] = {rr.y0, rr.y1}; RectF o; bool first = true;
+        for (double x : xs) for (double y : ys) {
+            double px, py; t.apply(x, y, px, py);
+            if (first) { o.x0 = o.x1 = px; o.y0 = o.y1 = py; first = false; }
+            else { o.x0 = std::min(o.x0, px); o.x1 = std::max(o.x1, px); o.y0 = std::min(o.y0, py); o.y1 = std::max(o.y1, py); }
+        }
+        rr = o;
+    };
     bool cacher = rect("cacher", false, r);
     if (!cacher) {   // the original and WotL have the same three icons loose in the HUD instead of in hud.cacher: the
                      // area Eternal's cacher covers (HUD coordinates), so the bomb row is found the same way
@@ -237,18 +302,21 @@ int recompTouchTargets(float out[4][4]) {
             else { r.x0 = std::min(r.x0, px); r.x1 = std::max(r.x1, px); r.y0 = std::min(r.y0, py); r.y1 = std::max(r.y1, py); }
         }
     }
+    if (cacher) moved(WIDE_COUNT, r);
     if (cacher) {   // middle row; the count text sits to the right of the icon
         double h = (r.y1 - r.y0) / 3, w = r.x1 - r.x0;
         out[0][0] = (float)(r.x0 - pad); out[0][1] = (float)(r.y0 + h - pad * 0.3);
         out[0][2] = (float)(r.x0 + w * 2.8 + pad); out[0][3] = (float)(r.y0 + 2 * h + pad * 0.3); mask |= 1;
     }
-    if (rect("it", false, r)) { out[1][0] = (float)(r.x0 - pad); out[1][1] = (float)(r.y0 - pad); out[1][2] = (float)(r.x1 + pad); out[1][3] = (float)(r.y1 + pad); mask |= 2; }
-    if (rect("extra", true, r)) { out[2][0] = (float)(r.x0 - pad); out[2][1] = (float)(r.y0 - pad); out[2][2] = (float)(r.x1 + pad); out[2][3] = (float)(r.y1 + pad); mask |= 4; }
+    if (rect("it", false, r)) { moved(WIDE_ACTIVE, r); out[1][0] = (float)(r.x0 - pad); out[1][1] = (float)(r.y0 - pad); out[1][2] = (float)(r.x1 + pad); out[1][3] = (float)(r.y1 + pad); mask |= 2; }
+    if (rect("extra", true, r)) { moved(WIDE_POCKET, r); out[2][0] = (float)(r.x0 - pad); out[2][1] = (float)(r.y0 - pad); out[2][2] = (float)(r.x1 + pad); out[2][3] = (float)(r.y1 + pad); mask |= 4; }
     // pause button (drawn by the renderer, not part of the game): in the empty corner right of "-LIFE-",
     // 28 units square in the game's 640x480 space, mapped through _root's matrix (HD scale and offset)
     {
         double rx0 = 588, ry0 = 4, rx1 = 616, ry1 = 32, x0, y0, x1, y1;
         vm.root->m.apply(rx0, ry0, x0, y0); vm.root->m.apply(rx1, ry1, x1, y1);
+        RectF pr; pr.x0 = std::min(x0, x1); pr.y0 = std::min(y0, y1); pr.x1 = std::max(x0, x1); pr.y1 = std::max(y0, y1);
+        moved(WIDE_LIFE, pr); x0 = pr.x0; y0 = pr.y0; x1 = pr.x1; y1 = pr.y1;
         out[3][0] = (float)x0; out[3][1] = (float)y0; out[3][2] = (float)x1; out[3][3] = (float)y1; mask |= 8;
     }
     return mask;
