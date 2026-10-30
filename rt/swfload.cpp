@@ -1,10 +1,16 @@
 // SWF loader: builds the character definitions from the user's original file.
 #include "swfdata.h"
+#include <chrono>
 #include "core.h"
 #include <cstdio>
 #include <cstring>
 #include <map>
 #include <algorithm>
+#include <mutex>
+#include <atomic>
+#ifdef FL_LEAN
+#include <zlib.h>
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
@@ -268,6 +274,12 @@ void flatten(const Path& p, std::vector<float>& out) {
 
 ShapeDef* parseShape(Rd& r, int tag) {
     auto* s = new ShapeDef(); s->type = CH_SHAPE; s->id = r.u16();
+    if (g_leanSwf) {   // records parsed on demand (shapeEnsure); only the bounds now
+        s->rawTag = (uint16_t)tag; s->parsed = false;
+        s->bounds = r.rect();
+        s->raw = nullptr; s->rawOff = r.u32(); s->rawLen = r.u32();   // stub (leanTags): the records stay in the cache file
+        return s;
+    }
     s->bounds = r.rect();
     if (tag == 83) { r.rect(); r.u8(); }
     s->layers.emplace_back();
@@ -277,6 +289,69 @@ ShapeDef* parseShape(Rd& r, int tag) {
     return s;   // (hit polygons are computed the first time they're needed: shapeHitPolys)
 }
 
+}  // namespace
+// ---- lean loading: shapes parsed on demand, dropped again (least recently used first) above a memory budget
+bool g_leanSwf = false;
+static uint32_t g_shapeUseClock = 0;
+static size_t g_shapeParsedBytes = 0;
+static std::vector<ShapeDef*> g_shapeParsedList;
+size_t g_shapeBudgetBytes = 6u << 20;
+static size_t shapeBytes(const ShapeDef* s) {
+    size_t n = sizeof(HitEdge) * s->hitEdges.capacity();
+    for (auto& L : s->layers) {
+        n += 64 + (L.fills.capacity() + L.lines.capacity()) * 48;
+        for (auto& P : L.fillPaths) n += P.pts.capacity() * sizeof(float) + P.verbs.capacity() + 32;
+        for (auto& P : L.linePaths) n += P.pts.capacity() * sizeof(float) + P.verbs.capacity() + 32;
+    }
+    for (auto& hp : s->hitPolys) n += hp.capacity() * sizeof(float);
+    return n;
+}
+static void shapeDrop(ShapeDef* s) {
+    std::vector<ShapeLayer>().swap(s->layers); std::vector<HitEdge>().swap(s->hitEdges);
+    std::vector<std::vector<float>>().swap(s->hitPolys); s->hitBuilt = false; s->parsed = false;
+    g_shapeParsedBytes -= std::min<size_t>(g_shapeParsedBytes, s->parsedBytes); s->parsedBytes = 0;
+}
+bool g_shapeEvict = false;   // drop parsed shapes over the budget: only with a single thread using them (PSP)
+static std::mutex g_shapeMu;
+static bool leanRead(uint32_t off, uint32_t len, std::vector<uint8_t>& out);
+extern double g_lazyParseMs;
+uint32_t g_shapeParses = 0;   // (diagnostics) shapes parsed (again)
+uint32_t g_shapeTick = 0;     // (PSP) the logic tick: shapes used in the last 2 seconds are never dropped
+void shapeEnsure(ShapeDef* s) {
+    if (!s) return;
+    s->lastUse = g_shapeEvict ? g_shapeTick : ++g_shapeUseClock;
+    if (s->parsed) return;
+    std::lock_guard<std::mutex> lk(g_shapeMu);
+    if (s->parsed) return;
+    auto tp0 = std::chrono::steady_clock::now();
+    struct AddMs { std::chrono::steady_clock::time_point t; ~AddMs() { extern double g_lazyParseMs; g_lazyParseMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count(); } } addMs{tp0};
+    std::vector<uint8_t> buf;
+    if (!s->raw && !leanRead(s->rawOff, s->rawLen, buf)) { s->parsed = true; return; }   // (read error: drawn empty)
+    Rd r(s->raw ? s->raw : buf.data(), 0, s->rawLen); int tag = s->rawTag;
+    s->bounds = r.rect();
+    if (tag == 83) { r.rect(); r.u8(); }
+    s->layers.emplace_back();
+    readFillStyles(r, tag, s->layers.back().fills); readLineStyles(r, tag, s->layers.back().lines);
+    r.align(); int fb = r.ub(4), lb = r.ub(4);
+    readShapeRecords(r, tag, s->layers, fb, lb, &s->hitEdges);
+    s->parsedBytes = (uint32_t)shapeBytes(s);
+    std::atomic_thread_fence(std::memory_order_release);
+    s->parsed = true;
+    g_shapeParsedBytes += s->parsedBytes; g_shapeParsedList.push_back(s);
+    g_shapeParses++;
+    if (g_shapeEvict && g_shapeParsedBytes > g_shapeBudgetBytes) {   // drop the least recently used, down to 3/4 of the budget
+        std::sort(g_shapeParsedList.begin(), g_shapeParsedList.end(), [](ShapeDef* a, ShapeDef* b) { return a->lastUse < b->lastUse; });
+        size_t target = g_shapeBudgetBytes * 3 / 4, w = 0;
+        for (size_t i = 0; i < g_shapeParsedList.size(); i++) {
+            ShapeDef* x = g_shapeParsedList[i];
+            // (what is on screen now isn't dropped, even over the budget: parsing it again every tick would be far worse)
+            if (g_shapeParsedBytes > target && x != s && !x->pinned && x->parsed && x->lastUse + 60 < g_shapeTick) shapeDrop(x);
+            else if (x->parsed) g_shapeParsedList[w++] = x;
+        }
+        g_shapeParsedList.resize(w);
+    }
+}
+namespace {
 MorphDef* parseMorph(Rd& r, int tag, size_t end) {
     auto* m = new MorphDef(); m->type = CH_MORPH; m->id = r.u16();
     m->b0 = r.rect(); m->b1 = r.rect();
@@ -493,6 +568,7 @@ void BitmapDef::decode() {
         }
         stbi_image_free(pixels);
     }
+    if (kPxABGR) for (auto& p : px) p = pxSwapRB(p);   // (memory order: see kPxABGR)
 }
 
 std::vector<uint8_t> g_jpegTables;
@@ -554,9 +630,15 @@ void parseTimeline(const uint8_t* d, size_t p, size_t end, SpriteDef* sp, bool i
                 if (!stream) break;
                 uint16_t sc = r.u16(); r.s16();
                 if ((size_t)frame >= stream->frameBlock.size()) { stream->frameBlock.resize(frame + 1, -1); stream->frameSample.resize(frame + 1, 0); }
-                stream->frameBlock[frame] = (int32_t)stream->mp3.size();
                 stream->frameSample[frame] = streamSample;
-                stream->mp3.insert(stream->mp3.end(), d + r.p, d + e);
+                if (g_leanSwf) {   // stub: (offset in the cache file, length)
+                    uint32_t off = r.u32(), ln = r.u32();
+                    stream->frameBlock[frame] = (int32_t)stream->leanSize;
+                    stream->fileBlocks.push_back({off, ln}); stream->leanSize += ln;
+                } else {
+                    stream->frameBlock[frame] = (int32_t)stream->mp3.size();
+                    stream->mp3.insert(stream->mp3.end(), d + r.p, d + e);
+                }
                 streamSample += sc;
                 break;
             }
@@ -564,7 +646,8 @@ void parseTimeline(const uint8_t* d, size_t p, size_t end, SpriteDef* sp, bool i
                 if (!isRoot) break;
                 auto* s2 = new SpriteDef(); s2->type = CH_SPRITE; s2->id = r.u16(); s2->nframes = r.u16();
                 g_movie.chars[s2->id] = s2;
-                parseTimeline(d, r.p, e, s2, false);
+                if (g_leanSwf) { s2->tlData = d; s2->tlBeg = r.p; s2->tlEnd = e; }   // (parsed when first instantiated)
+                else parseTimeline(d, r.p, e, s2, false);
                 break;
             }
             case 2: case 22: case 32: case 83: if (isRoot) { auto* s = parseShape(r, tag); g_movie.chars[s->id] = s; } break;
@@ -578,7 +661,8 @@ void parseTimeline(const uint8_t* d, size_t p, size_t end, SpriteDef* sp, bool i
                 auto* s = new SoundDef(); s->type = CH_SOUND; s->id = r.u16(); uint8_t f = r.u8();
                 s->format = f >> 4; s->rate = (f >> 2) & 3; s->is16 = f & 2; s->stereo = f & 1; s->samples = r.u32();
                 if (s->format == 2) { s->seek = r.s16(); }
-                s->data = d + r.p; s->size = e - r.p;
+                if (g_leanSwf) { s->fileOff = r.u32(); s->size = r.u32(); s->data = nullptr; }   // stub
+                else { s->data = d + r.p; s->size = e - r.p; }
                 g_movie.chars[s->id] = s; break;
             }
             case 10: case 48: case 75: if (isRoot) parseFont3(r, e, tag); break;
@@ -596,7 +680,18 @@ void parseTimeline(const uint8_t* d, size_t p, size_t end, SpriteDef* sp, bool i
         }
     }
     if (sp->frames.size() < (size_t)sp->nframes) sp->frames.resize(sp->nframes);
+    sp->places.shrink_to_fit(); for (auto& f : sp->frames) f.shrink_to_fit();
 }
+}  // namespace
+double g_lazyParseMs = 0;   // (diagnostics) time parsing timelines and shapes on demand
+void spriteEnsure(SpriteDef* sp) {
+    if (!sp->tlData) return;
+    auto t0 = std::chrono::steady_clock::now();
+    const uint8_t* d = sp->tlData; sp->tlData = nullptr;
+    parseTimeline(d, sp->tlBeg, sp->tlEnd, sp, false);
+    g_lazyParseMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+namespace {
 // The Steam game doesn't ship a standalone .swf: Isaac.exe is an MDM Zinc projector that carries the SWF (CWS) at the end
 // of the executable, preceded by its length and encrypted with an XOR key k(i) = a + b*i (mod 256, from the first
 // byte of the SWF). b = 0x21 and a changes with each executable (0xd5 the original, 0x83 Wrath of the Lamb, 0xa1 Eternal),
@@ -610,7 +705,7 @@ static size_t peImageEnd(const uint8_t* d, size_t n) {
         if ((size_t)pe + 24 < n && d[pe] == 'P' && d[pe + 1] == 'E') {
             unsigned ns = d[pe + 6] | d[pe + 7] << 8, opt = d[pe + 20] | d[pe + 21] << 8;
             size_t sec = pe + 24 + opt;
-            for (unsigned i = 0; i < ns && sec + 40 * i + 24 <= n; i++) start = std::max(start, (size_t)rd32(d + sec + 40 * i + 16) + rd32(d + sec + 40 * i + 20));
+            for (unsigned i = 0; i < ns && sec + 40 * i + 24 <= n; i++) start = std::max(start, (size_t)(rd32(d + sec + 40 * i + 16) + rd32(d + sec + 40 * i + 20)));
         }
     }
     return start;
@@ -659,16 +754,22 @@ static bool swfFromExe(std::vector<uint8_t>& data) {
 }
 }  // namespace
 
-extern const GameCode g_code_og, g_code_wotl, g_code_eternal;
+#ifdef __PSP__
+// (PSP: one game per binary, the others' tables are absent: weak references resolve to null)
+#define FL_GAMECODE extern const GameCode __attribute__((weak))
+#else
+#define FL_GAMECODE extern const GameCode
+#endif
+FL_GAMECODE g_code_og; FL_GAMECODE g_code_wotl; FL_GAMECODE g_code_eternal;
 // supported versions: uncompressed SWF size (header) and CRC-32 of the whole SWF
 static const KnownGame kGames[] = {
-    {&g_code_og,      "og",      39199603, 0xf6a0e3e6u},
-    {&g_code_wotl,    "wotl",    36209977, 0xb79d3bbcu},
-    {&g_code_eternal, "eternal", 46493245, 0x090ef7b9u},
+    {&g_code_og,      "og",      39199603, 0xf6a0e3e6u, "The Binding of Isaac"},
+    {&g_code_wotl,    "wotl",    36209977, 0xb79d3bbcu, "Wrath of the Lamb"},
+    {&g_code_eternal, "eternal", 46493245, 0x090ef7b9u, "Eternal Edition"},
 };
 const KnownGame* knownGames(int* n) { *n = (int)(sizeof kGames / sizeof kGames[0]); return kGames; }
 const KnownGame* knownGameBySwfLen(uint32_t len) { for (auto& g : kGames) if (g.swfLen == len) return &g; return nullptr; }
-const GameCode* g_code = &g_code_wotl;
+const GameCode* g_code = &g_code_wotl;   // (replaced when a game is loaded)
 int g_stageW = 0, g_stageH = 0; float g_frameRate = 30;
 const KnownGame* g_game = nullptr;
 bool g_gameExact = false;
@@ -695,7 +796,222 @@ uint32_t peekSwfLength(const std::string& path) {
     return res;
 }
 
+// ---- lean loading (PSP: the decompressed SWF doesn't fit in memory)
+// The first time, the SWF is extracted from the executable and decompressed to a cache file (streaming: neither the
+// .exe nor the SWF is ever whole in memory). The movie data in memory is that SWF without the MP3 data of its sounds
+// and timeline streams (~70 % of it): those tags keep a stub with the data's offset and length in the cache file,
+// read when the sound plays.
+std::string g_leanCacheDir;
+static FILE* g_swfFile = nullptr;
+static std::mutex g_swfFileMu;
+static uint32_t crcUpdate(uint32_t crc, const uint8_t* p, size_t n) {
+    static uint32_t tab[256]; static bool init = false;
+    if (!init) { for (uint32_t i = 0; i < 256; i++) { uint32_t c = i; for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1))); tab[i] = c; } init = true; }
+    for (size_t i = 0; i < n; i++) crc = tab[(crc ^ p[i]) & 255] ^ (crc >> 8);
+    return crc;
+}
+#ifdef FL_LEAN
+static bool extractSwf(const std::string& exe, const std::string& out, uint32_t& outLen, uint32_t& outCrc, std::string& err) {
+    FILE* f = fopen(exe.c_str(), "rb"); if (!f) { err = "cannot open " + exe; return false; }
+    fseek(f, 0, SEEK_END); long total = ftell(f); fseek(f, 0, SEEK_SET);
+    std::vector<uint8_t> h(std::min<long>(total, 8192));
+    if (fread(h.data(), 1, h.size(), f) != h.size() || h.size() < 8) { fclose(f); err = "read error"; return false; }
+    size_t swfOff = 0; uint8_t ka = 0, kb = 0; bool xr = false;
+    if ((h[0] == 'C' || h[0] == 'F') && h[1] == 'W' && h[2] == 'S') swfOff = 0;
+    else if (h[0] == 'M' && h[1] == 'Z') {
+        size_t start = peImageEnd(h.data(), (size_t)total);
+        if (start >= (size_t)total) { fclose(f); err = exe + " does not contain the game."; return false; }
+        std::vector<uint8_t> o(std::min<long>(total - (long)start, 1 << 20));
+        fseek(f, (long)start, SEEK_SET);
+        ZincHit z;
+        if (fread(o.data(), 1, o.size(), f) != o.size() || !findZinc(o.data(), o.size(), 0, start, (size_t)total, z)) {
+            fclose(f); err = exe + " does not contain the game.\nUse Isaac.exe from the Steam folder (not Binding_of_Isaac.exe)."; return false;
+        }
+        swfOff = start + z.off; ka = z.a; kb = z.b; xr = true;
+    } else { fclose(f); err = "not a SWF"; return false; }
+    FILE* w = fopen((out + ".tmp").c_str(), "wb"); if (!w) { fclose(f); err = "cannot write " + out; return false; }
+    fseek(f, (long)swfOff, SEEK_SET);
+    std::vector<uint8_t> in(256 << 10), dec(256 << 10);
+    uint8_t k = ka; bool ok = true; uint32_t crc = 0xffffffffu, written = 0, full = 0; bool compressed = false;
+    z_stream zs{}; bool zinit = false; bool headerDone = false; uint8_t hdr[8]; int hn = 0;
+    for (;;) {
+        size_t n = fread(in.data(), 1, in.size(), f);
+        if (n == 0) break;
+        if (xr) for (size_t i = 0; i < n; i++, k += kb) in[i] ^= k;
+        size_t p = 0;
+        if (!headerDone) {
+            while (hn < 8 && p < n) hdr[hn++] = in[p++];
+            if (hn < 8) continue;
+            compressed = hdr[0] == 'C'; full = rd32(hdr + 4); hdr[0] = 'F';
+            fwrite(hdr, 1, 8, w); crc = crcUpdate(crc, hdr, 8); written = 8; headerDone = true;
+            if (compressed) { if (inflateInit(&zs) != Z_OK) { ok = false; break; } zinit = true; }
+        }
+        if (!compressed) {
+            size_t m = std::min<size_t>(n - p, full > written ? full - written : 0);
+            fwrite(in.data() + p, 1, m, w); crc = crcUpdate(crc, in.data() + p, m); written += (uint32_t)m;
+            if (written >= full) break;
+            continue;
+        }
+        zs.next_in = in.data() + p; zs.avail_in = (uInt)(n - p);
+        int rc = Z_OK;
+        while (zs.avail_in > 0 && rc != Z_STREAM_END) {
+            zs.next_out = dec.data(); zs.avail_out = (uInt)dec.size();
+            rc = inflate(&zs, Z_NO_FLUSH);
+            if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) { ok = false; break; }
+            size_t m = dec.size() - zs.avail_out;
+            fwrite(dec.data(), 1, m, w); crc = crcUpdate(crc, dec.data(), m); written += (uint32_t)m;
+        }
+        if (!ok || rc == Z_STREAM_END) break;
+    }
+    if (zinit) inflateEnd(&zs);
+    fclose(f);
+    if (fclose(w) != 0) ok = false;
+    if (!ok || written != full) { remove((out + ".tmp").c_str()); err = "could not decompress the game (" + std::to_string(written) + " of " + std::to_string(full) + " bytes)"; return false; }
+    remove(out.c_str()); rename((out + ".tmp").c_str(), out.c_str());
+    outLen = written; outCrc = ~crc;
+    if (FILE* idf = fopen((out + ".id").c_str(), "w")) { fprintf(idf, "%u %u\n", (unsigned)outLen, (unsigned)outCrc); fclose(idf); }
+    return true;
+}
+// copies the tags of [pos, end) of the cache file into out, without the sound data (stubs instead)
+static bool leanTags(FILE* f, size_t pos, size_t end, std::vector<uint8_t>& out) {
+    auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) out.push_back((uint8_t)(v >> (8 * i))); };
+    auto hdrLong = [&](int tag, uint32_t len) { uint16_t hh = (uint16_t)(tag << 6 | 63); out.push_back(hh & 255); out.push_back(hh >> 8); put32(len); };
+    std::vector<uint8_t> body;
+    while (pos + 2 <= end) {
+        uint8_t hb[6]; fseek(f, (long)pos, SEEK_SET); if (fread(hb, 1, 2, f) != 2) return false;
+        uint16_t hh = hb[0] | hb[1] << 8; int tag = hh >> 6; uint32_t len = hh & 63; pos += 2;
+        if (len == 63) { if (fread(hb + 2, 1, 4, f) != 4) return false; len = rd32(hb + 2); pos += 4; }
+        size_t b = pos; pos += len;
+        if (tag == 14 || tag == 19) {
+            uint8_t first[9]; size_t keep = tag == 19 ? 4 : 7;
+            if (fread(first, 1, std::min<size_t>(9, len), f) < std::min<size_t>(9, len)) return false;
+            if (tag == 14 && len >= 9 && (first[2] >> 4) == 2) keep = 9;   // MP3: + SeekSamples
+            keep = std::min<size_t>(keep, len);
+            hdrLong(tag, (uint32_t)(keep + 8)); out.insert(out.end(), first, first + keep);
+            put32((uint32_t)(b + keep)); put32((uint32_t)(len - keep));
+        } else if (tag == 39) {
+            uint8_t sh[4]; if (len < 4 || fread(sh, 1, 4, f) != 4) return false;
+            std::vector<uint8_t> sub; sub.insert(sub.end(), sh, sh + 4);
+            std::swap(out, sub);
+            bool ok = leanTags(f, b + 4, b + len, out);
+            std::swap(out, sub);
+            if (!ok) return false;
+            hdrLong(39, (uint32_t)sub.size()); out.insert(out.end(), sub.begin(), sub.end());
+        } else if ((tag == 2 || tag == 22 || tag == 32 || tag == 83) && len > 3) {   // shape: id and bounds; the records stay in the file
+            uint8_t first[19]; size_t n = std::min<size_t>(sizeof first, len);
+            if (fread(first, 1, n, f) != n) return false;
+            size_t keep = std::min<size_t>(n, 2 + (5 + 4 * (first[2] >> 3) + 7) / 8);
+            hdrLong(tag, (uint32_t)(keep + 8)); out.insert(out.end(), first, first + keep);
+            put32((uint32_t)(b + 2)); put32(len - 2);
+        } else if (tag == 12 && len > 1) {   // DoAction: recompiled, the bytecode isn't needed (1 byte: "not empty")
+            out.push_back((uint8_t)(12 << 6 | 1)); out.push_back((uint8_t)((12 << 6 | 1) >> 8)); out.push_back(0);
+        } else {
+            body.resize(len); if (len && fread(body.data(), 1, len, f) != len) return false;
+            if (len < 63 && tag != 2 && tag != 22 && tag != 32 && tag != 83) { uint16_t h2 = (uint16_t)(tag << 6 | len); out.push_back(h2 & 255); out.push_back(h2 >> 8); }
+            else hdrLong(tag, len);
+            out.insert(out.end(), body.begin(), body.end());
+        }
+        if (tag == 0) break;
+    }
+    return true;
+}
+#endif
+static bool leanRead(uint32_t off, uint32_t len, std::vector<uint8_t>& out) {
+    std::lock_guard<std::mutex> lk(g_swfFileMu);
+    out.resize(len);
+    if (!g_swfFile || fseek(g_swfFile, (long)off, SEEK_SET) != 0 || fread(out.data(), 1, len, g_swfFile) != len) { logf("game data: read error\n"); return false; }
+    return true;
+}
+static std::map<const void*, std::weak_ptr<const std::vector<uint8_t>>> g_soundCacheW;
+static size_t g_soundRecentBytes;
+void leanStats(size_t* shapeBytes, size_t* soundBytes) { *shapeBytes = g_shapeParsedBytes; *soundBytes = g_soundRecentBytes; }
+static std::vector<std::pair<const void*, std::shared_ptr<const std::vector<uint8_t>>>> g_soundRecent;   // keeps the last ones loaded
+size_t g_soundCacheBytes = 8u << 20;
+static std::shared_ptr<const std::vector<uint8_t>> readBlocks(const void* key, const std::vector<std::array<uint32_t, 2>>& blocks) {
+    std::lock_guard<std::mutex> lk(g_swfFileMu);
+    auto it = g_soundCacheW.find(key);
+    if (it != g_soundCacheW.end()) if (auto sp = it->second.lock()) return sp;
+    auto v = std::make_shared<std::vector<uint8_t>>();
+    size_t total = 0; for (auto& b : blocks) total += b[1];
+    v->resize(total);
+    size_t o = 0;
+    for (auto& b : blocks) {
+        if (!g_swfFile || fseek(g_swfFile, (long)b[0], SEEK_SET) != 0 || fread(v->data() + o, 1, b[1], g_swfFile) != b[1]) { logf("sound data: read error\n"); v->clear(); break; }
+        o += b[1];
+    }
+    std::shared_ptr<const std::vector<uint8_t>> sp = v;
+    g_soundCacheW[key] = sp;
+    g_soundRecent.push_back({key, sp}); g_soundRecentBytes += total;
+    while (g_soundRecentBytes > g_soundCacheBytes && g_soundRecent.size() > 1) { g_soundRecentBytes -= g_soundRecent.front().second->size(); g_soundRecent.erase(g_soundRecent.begin()); }
+    return sp;
+}
+std::shared_ptr<const std::vector<uint8_t>> soundBytes(SoundDef* s) {
+    if (!g_leanSwf) return nullptr;
+    return readBlocks(s, {{s->fileOff, (uint32_t)s->size}});
+}
+std::shared_ptr<const std::vector<uint8_t>> streamBytes(StreamInfo* st) {
+    if (!g_leanSwf) return nullptr;
+    return readBlocks(st, st->fileBlocks);
+}
+#ifdef FL_LEAN
+static bool loadLean(Movie& m, const std::string& path, std::string& err) {
+    // cache file named after the executable's size and modification-independent name
+    FILE* f = fopen(path.c_str(), "rb"); if (!f) { err = "cannot open " + path; return false; }
+    fseek(f, 0, SEEK_END); long exeLen = ftell(f); fclose(f);
+    std::string cache = g_leanCacheDir + "swf_" + std::to_string(exeLen) + ".cache";
+    uint32_t len = 0, crc = 0;
+    {
+        FILE* idf = fopen((cache + ".id").c_str(), "r"); unsigned a = 0, b = 0;
+        bool have = idf && fscanf(idf, "%u %u", &a, &b) == 2; if (idf) fclose(idf);
+        FILE* cf = have ? fopen(cache.c_str(), "rb") : nullptr; long cl = -1;
+        if (cf) { fseek(cf, 0, SEEK_END); cl = ftell(cf); fclose(cf); }
+        if (have && cl == (long)a) { len = a; crc = b; }
+        else {
+            logf("decompressing the game to %s...\n", cache.c_str());
+            if (!extractSwf(path, cache, len, crc, err)) return false;
+        }
+    }
+    g_game = nullptr; g_gameExact = false;
+    for (auto& g : kGames) if (g.crc == crc) { g_game = &g; g_gameExact = true; }
+    if (!g_game) g_game = knownGameBySwfLen(len);
+    if (!g_game) { err = path + ": is not one of the versions of The Binding of Isaac supported by the recomp\n(original, Wrath of the Lamb or Eternal Edition from Steam)."; return false; }
+    if (g_swfFile) fclose(g_swfFile);
+    g_swfFile = fopen(cache.c_str(), "rb"); if (!g_swfFile) { err = "cannot open " + cache; return false; }
+    static char vbuf[16 << 10]; setvbuf(g_swfFile, vbuf, _IOFBF, sizeof vbuf);   // (shapes: small reads anywhere)
+    uint8_t h[32]; if (fread(h, 1, sizeof h, g_swfFile) != sizeof h) { err = "read error"; return false; }
+    int nb = h[8] >> 3; size_t hdrLen = 8 + (5 + 4 * nb + 7) / 8 + 4;
+    m.data.assign(h, h + hdrLen);
+    std::lock_guard<std::mutex> lk(g_swfFileMu);
+    if (!leanTags(g_swfFile, hdrLen, len, m.data)) { err = "read error in " + cache; return false; }
+    m.data.shrink_to_fit();
+    logf("game read from %s (SWF of %u bytes, %zu in memory)\n", path.c_str(), (unsigned)len, m.data.size());
+    return true;
+}
+
+#endif
 bool Movie::load(const std::string& path, std::string& err) {
+#ifdef FL_LEAN
+    if (g_leanSwf) {
+        if (!loadLean(*this, path, err)) return false;
+        if (!g_game->code) { err = std::string("this program does not contain ") + g_game->title + "."; return false; }
+        g_code = g_game->code;
+        g_stageW = g_code->stageW; g_stageH = g_code->stageH; g_frameRate = g_code->frameRate;
+        g_code->initAtoms();
+        logf("game: %s%s\n", g_game->title, g_gameExact ? "" : " (the SWF does not exactly match the Steam version)");
+        version = data[3];
+        Rd r(data.data(), 8, data.size());
+        RectF rc = r.rect(); width = (int)rc.x1; height = (int)rc.y1;
+        frameRate = r.u16() / 256.f; rootDef.nframes = r.u16(); rootDef.id = 0; rootDef.type = CH_SPRITE;
+        chars.assign(65536, nullptr);
+        for (int i = 0; i < g_code->nFrames; i++) {
+            auto& s = g_code->frames[i];
+            g_scriptMap[(uint64_t)s.sprite << 32 | (uint64_t)s.frame << 16 | s.index] = s.fn;
+        }
+        for (int i = 0; i < g_code->nButtons; i++) g_buttonMap[(uint32_t)g_code->buttons[i].button << 16 | g_code->buttons[i].index] = g_code->buttons[i].fn;
+        parseTimeline(data.data(), r.p, data.size(), &rootDef, true);
+        return true;
+    }
+#endif
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) { err = "cannot open " + path; return false; }
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -726,10 +1042,11 @@ bool Movie::load(const std::string& path, std::string& err) {
         for (auto& g : kGames) if (g.crc == crc) { g_game = &g; g_gameExact = true; }
         if (!g_game) g_game = knownGameBySwfLen((uint32_t)data.size());
         if (!g_game) { err = path + ": is not one of the versions of The Binding of Isaac supported by the recomp\n(original, Wrath of the Lamb or Eternal Edition from Steam)."; data.clear(); return false; }
+        if (!g_game->code) { err = std::string("this program does not contain ") + g_game->title + "."; return false; }
         g_code = g_game->code;
         g_stageW = g_code->stageW; g_stageH = g_code->stageH; g_frameRate = g_code->frameRate;
         g_code->initAtoms();
-        logf("game: %s%s\n", g_code->title, g_gameExact ? "" : " (the SWF does not exactly match the Steam version)");
+        logf("game: %s%s\n", g_game->title, g_gameExact ? "" : " (the SWF does not exactly match the Steam version)");
     }
     version = data[3];
     Rd r(data.data(), 8, data.size());
@@ -747,6 +1064,7 @@ bool Movie::load(const std::string& path, std::string& err) {
 
 // flattened polygons for hitTest(x, y, true); previously computed at load time (~95 MB for all shapes)
 const std::vector<std::vector<float>>& shapeHitPolys(ShapeDef* s) {
+    shapeEnsure(s);
     if (!s->hitBuilt) {
         s->hitPolys.clear();
         for (auto& L : s->layers) for (auto& fp : L.fillPaths) { std::vector<float> poly; flatten(fp, poly); if (!poly.empty()) s->hitPolys.push_back(std::move(poly)); }

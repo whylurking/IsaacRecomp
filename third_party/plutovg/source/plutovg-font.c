@@ -702,7 +702,7 @@ plutovg_font_face_t* plutovg_font_face_cache_get(plutovg_font_face_cache_t* cach
 #define PATH_MAX 4096
 #endif
 
-#ifndef __SWITCH__
+#if !defined(__SWITCH__) && !defined(__PSP__)
 #include <sys/mman.h>
 #endif
 #include <sys/stat.h>
@@ -760,7 +760,7 @@ static void* plutovg_mmap(const char* filename, long* length)
         return NULL;
     }
 
-#ifdef __SWITCH__   /* recomp: sin mmap en Horizon */
+#if defined(__SWITCH__) || defined(__PSP__)   /* recomp: no mmap on Horizon / PSP */
     void* data = malloc(st.st_size);
     if(data == NULL || read(fd, data, st.st_size) != st.st_size) {
         free(data);
@@ -781,7 +781,7 @@ static void* plutovg_mmap(const char* filename, long* length)
 
 static void plutovg_unmap(void* data, long length)
 {
-#ifdef __SWITCH__
+#if defined(__SWITCH__) || defined(__PSP__)
     (void)length;
     free(data);
 #else

@@ -10,6 +10,7 @@
 #include "touch.h"
 #include "controls.h"
 #include "menuui.h"
+#include "mods.h"
 #ifdef __ANDROID__
 #include <jni.h>
 #include <sys/stat.h>
@@ -62,6 +63,7 @@ int recompTouchTargets(float out[4][4]);
 void applyLoadPatches(); void recompPatchesTick(); void recompFullscreenChanged(bool full); bool recompInGameplay(bool* inGame);
 extern std::atomic<int> g_fullscreenRequest; extern std::atomic<bool> g_isFullscreen;
 void renderFinish();
+void recompMusicTick();
 void renderPaceAfterSwap();
 bool renderPaceWait(uint64_t timeoutNs);
 int renderAtlasPages();
@@ -120,12 +122,14 @@ struct Config {
     int autoHeight = 0;              // (Android) the resolution automatic mode settled on for this device (written by the game)
     bool gcAfterTick = true;         // collect garbage after the tick has been handed to the renderer (not inside it)
     int maxMarginMs = fl::kIsSwitch ? 6 : 0;   // cap of the adaptive display delay (ms); 0 = automatic (4..30 ms)
+    std::string mods;                // mods turned on (ids of files in the mods folder), comma-separated
 };
 // settings added after the first release: written into an existing isaac.ini (with their explanation) when missing,
 // so they can be found and changed
 static const char* kLateSettings[][3] = {
     {"gc_after_tick", "; gc_after_tick = 1 frees memory after each game tick has been sent to the screen, so it doesn't delay the\n;   image; 0 = inside the tick, as in 1.3", nullptr},
     {"max_margin", "; max_margin = how far behind the game the image may be shown, in ms (it follows how long the game's ticks take,\n;   to keep motion smooth); a cap keeps the delay constant (late ticks are extrapolated); 0 = automatic (4-30 ms)", nullptr},
+    {"mods", "; mods = the mods that are on: ids of the files in the mods folder, separated by commas (empty: none). The easy\n;   way to change it: open tools/mod_manager.html in a browser", ""},
 };
 static std::string trim(std::string s) { while (!s.empty() && isspace((unsigned char)s.back())) s.pop_back(); size_t i = 0; while (i < s.size() && isspace((unsigned char)s[i])) i++; return s.substr(i); }
 static void loadConfig(const std::string& path, Config& c) {
@@ -149,6 +153,7 @@ static void loadConfig(const std::string& path, Config& c) {
              ";   it is pushed, for small precise moves (top speed unchanged); 0 = always full speed, as on the keyboard\n"
              "joystick_acceleration = 1\n"
              << kLateSettings[0][1] << "\ngc_after_tick = 1\n" << kLateSettings[1][1] << "\nmax_margin = " << c.maxMarginMs << "\n"
+             << kLateSettings[2][1] << "\nmods =\n"
 #if defined(__ANDROID__) || defined(__SWITCH__)
              "; touch_controls = 0 turns off the touch joysticks, HUD taps and pause button (touch then only works in menus)\n"
              "touch_controls = 1\n"
@@ -175,12 +180,13 @@ static void loadConfig(const std::string& path, Config& c) {
         else if (k == "joystick_acceleration") c.joystickAcceleration = n;
         else if (k == "render_height") c.renderHeight = n; else if (k == "auto_height") c.autoHeight = n;
         else if (k == "gc_after_tick") c.gcAfterTick = n; else if (k == "max_margin") c.maxMarginMs = std::max(0, std::min(30, n));
+        else if (k == "mods") c.mods = v;
     }
     f.close();
     {   // an isaac.ini from an earlier version: add the newer settings (with their defaults) so they can be changed
         std::string add;
         for (auto& ls : kLateSettings) if (!seen.count(ls[0]))
-            add += std::string("\n") + ls[1] + "\n" + ls[0] + " = " + (std::string(ls[0]) == "max_margin" ? std::to_string(c.maxMarginMs) : std::string("1")) + "\n";
+            add += std::string("\n") + ls[1] + "\n" + ls[0] + " = " + (std::string(ls[0]) == "max_margin" ? std::to_string(c.maxMarginMs) : std::string(ls[2] ? ls[2] : "1")) + "\n";
         if (!add.empty()) { std::ofstream o(path, std::ios::app); o << add; }
     }
 #ifdef __SWITCH__
@@ -467,6 +473,15 @@ int main(int argc, char** argv) {
         AppletType at = appletGetAppletType();
         fprintf(stderr, "Isaac recomp (Switch) - %s mode, memory %d/%d MB\n",
                 at == AppletType_Application || at == AppletType_SystemApplication ? "application" : "applet (Album)", used, total);
+        // Video capture (holding the Capture button): automatic for a host game whose setting is "automatic"; one set
+        // to "enabled" needs the program to ask for it (libnx: appletInitializeGamePlayRecording). Only as an
+        // application (the Album applet can't record at all).
+        if (at == AppletType_Application) {
+            bool sup = false;
+            if (R_SUCCEEDED(appletIsGamePlayRecordingSupported(&sup)) && sup && R_SUCCEEDED(appletInitializeGamePlayRecording()))
+                appletSetGamePlayRecordingState(true);
+            fprintf(stderr, "video capture: %s\n", sup ? "available" : "not available with this host game");
+        }
     }
 #elif defined(__ANDROID__)
     // everything in the IsaacRecomp folder at the root of the internal storage (/storage/emulated/0/IsaacRecomp):
@@ -522,7 +537,20 @@ int main(int argc, char** argv) {
                 logf("%s copied from %s to the saves folder\n", f, old.c_str());
     }
 #endif
+#ifdef FL_LEAN
+    fl::g_leanSwf = getenv("ISAAC_NOLEAN") == nullptr; fl::g_leanCacheDir = pref;   // (lean loading: PSP / tests)
+#endif
     loadConfig(base + "isaac.ini", cfg);
+    {   // mods: the "mods" folder next to the program (mods.h), turned on with `mods =` in isaac.ini
+#ifdef _WIN32
+        std::string modsDir = base + "mods\\";
+#else
+        std::string modsDir = base + "mods/";
+#endif
+        const char* env = getenv("ISAAC_MODS");   // (tests)
+        fl::g_modsSaveDir = pref;
+        fl::modsInit(modsDir, env ? env : cfg.mods);
+    }
     {   // control bindings (rebinding screen: Options > Controls > Rebind controls)
         std::map<std::string, std::string> kv; std::ifstream f(base + "isaac.ini"); std::string line;
         while (std::getline(f, line)) {
@@ -593,7 +621,7 @@ int main(int argc, char** argv) {
         }
     }
     std::sort(found.begin(), found.end(), [](const Found& x, const Found& y) { return x.g < y.g; });   // release order
-    for (auto& f : found) logf("game found: %s at %s\n", f.g->code->title, f.path.c_str());
+    for (auto& f : found) logf("game found: %s at %s\n", f.g->title, f.path.c_str());
 
 #ifdef __SWITCH__
     Uint32 sdlFlags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER;   // controllers are read through libnx
@@ -645,6 +673,7 @@ int main(int argc, char** argv) {
     SDL_Window* win = nullptr; SDL_GLContext gl = nullptr;
     if (!(headless && norender)) {   // (logic tests need neither a window nor a GPU)
         win = SDL_CreateWindow("The Binding of Isaac", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, cfg.width, cfg.height, wflags);
+        if (win) { int w0, h0; SDL_GetWindowSize(win, &w0, &h0); if (h0 > 0) fl::g_windowAspect = (float)w0 / h0; }
         if (!win) { fprintf(stderr, "window: %s\n", SDL_GetError()); return 1; }
 #if !defined(__SWITCH__) && !defined(__ANDROID__) && !defined(_WIN32)
         {   // window / taskbar icon (Windows: from the .exe's resources, windows/isaac.ico)
@@ -693,7 +722,7 @@ int main(int argc, char** argv) {
         std::string want = !forcedGame.empty() ? forcedGame : cfg.game;
         for (size_t i = 0; i < found.size(); i++) if (want == found[i].g->tag) choice = (int)i;
         if (found.size() > 1 && forcedGame.empty() && win && !headless) {
-            choice = chooseGame(win, found.size(), [&](size_t i) { return std::string(!strcmp(found[i].g->tag, "og") ? "Original" : found[i].g->code->title); }, choice);
+            choice = chooseGame(win, found.size(), [&](size_t i) { return std::string(!strcmp(found[i].g->tag, "og") ? "Original" : found[i].g->title); }, choice);
             if (choice < 0) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
             saveIniValue(base + "isaac.ini", "game", found[choice].g->tag);
         }
@@ -766,7 +795,7 @@ int main(int argc, char** argv) {
     auto runScript = [&](std::function<void(double, const std::string&)> shot) {
         while (scriptPos < script.size() && script[scriptPos].tick <= g_player.tick) {
             ScriptCmd& c = script[scriptPos++];
-            if (c.op == "down") keyEvent(atoi(c.arg.c_str()), atoi(c.arg.c_str()) == 32 ? 32 : 0, true);
+            if (c.op == "down") { int k = atoi(c.arg.c_str()); if (!(k == 27 && menuEscapeResumes())) keyEvent(k, k == 32 ? 32 : 0, true); }
             else if (c.op == "up") keyEvent(atoi(c.arg.c_str()), 0, false);
             else if (c.op == "shot") shot(1.0, c.arg);
             else if (c.op == "shotf") { std::istringstream ss(c.arg); double fr = 0; std::string file; ss >> fr >> file; shot(fr, file); }
@@ -812,7 +841,7 @@ int main(int argc, char** argv) {
             Uint64 lt0 = SDL_GetPerformanceCounter(); size_t heap0 = gcCount();
             static int sampleTick = getenv("ISAAC_SAMPLE_TICK") ? atoi(getenv("ISAAC_SAMPLE_TICK")) : -1;
             if ((int)g_player.tick == sampleTick) profSampleStart();
-            runFrame(); runIntervals(); recompPatchesTick();
+            runFrame(); runIntervals(); recompPatchesTick(); fl::modsTick();
             static const bool menuUi = getenv("ISAAC_MENUUI") != nullptr;   // (testing the controller menus / rebinding screen)
             if (menuUi) { bool ig = false, gp = recompInGameplay(&ig); menuUiTick(gp, ig); }
             gcCollect();
@@ -828,6 +857,8 @@ int main(int argc, char** argv) {
             if (maxFrames >= 0 && (int)g_player.tick >= maxFrames) running = false;
             fl::audioDumpTick(wavPath.empty() ? nullptr : wavPath.c_str());
             if (norender) continue;
+            static const long renderFrom = getenv("ISAAC_RENDER_FROM") ? atol(getenv("ISAAC_RENDER_FROM")) : 0;   // (testing: faster shots)
+            if ((long)g_player.tick < renderFrom) continue;
             g_rstats = RenderStats();
             SnapPtr snap = buildSnapshot(); snap->time = g_player.tick * dt;
             if (menuUi) menuUiFill(*snap);
@@ -835,6 +866,8 @@ int main(int argc, char** argv) {
             int dw, dh; SDL_GL_GetDrawableSize(win, &dw, &dh);
             Uint64 rt0 = SDL_GetPerformanceCounter();
             renderFrame(dw, dh, g_benchAlpha);
+            static const bool gpuTime = getenv("ISAAC_GLFINISH") != nullptr;   // (testing: render time includes the GPU's)
+            if (gpuTime) { renderEndFrame(); renderFinish(); }
             double rms = (SDL_GetPerformanceCounter() - rt0) * 1000.0 / freq;
             if (perfOn) renderOverlay(perfLines);
             renderEndFrame();
@@ -863,11 +896,15 @@ int main(int argc, char** argv) {
         struct InputEv { int type; int code, ascii; bool down; double x, y; };   // 0 key, 1 mouse, 2 release all, 3 fullscreen, 4 menu tap
         const bool touchUI = cfg.touchControls && !headless;
         std::atomic<bool> logicPaused{false};   // (Android: app in the background)
+        std::atomic<uint32_t> consoleTicks{0};  // logic ticks spent paused by GenesisConsole (test injection clock)
         std::atomic<int> flushReq{0}, flushDone{0};   // save data written on the logic thread (app going to the background)
         std::vector<std::string> evalQ;         // (testing: ISAAC_TOUCH_INJECT "eval", run on the logic thread)
         std::mutex inMu, snapMu; std::vector<InputEv> inQ; std::deque<SnapPtr> snapQ;
         std::atomic<bool> logicRun{true};
         std::atomic<double> logicBase{0};
+        // Phase lock (v1.5): where the display's frames start (seconds modulo the refresh period, measured by the render
+        // loop) so the logic can publish each tick just before a frame starts (see the end of the logic loop). 0: off.
+        std::atomic<double> framePhase{0}, framePeriod{0};
         // while graphics are preloading (during the intro cutscene), input does not reach the game
         bool inputBlocked = false;
         double blockedTouchAt = -1;   // last input attempt while preloading (shows the progress for a few seconds)
@@ -896,6 +933,19 @@ int main(int argc, char** argv) {
         };
         // ---- controller in menus (an outline on the selected option, see menuui.cpp) and the rebinding screen
         RebindScreen wiz;
+        // ---- GenesisConsole (mod): opened during a run with its key (` by default), Back / Minus or a three-finger tap;
+        // while open it takes every input (the game is paused). Functions set once the touch controls exist.
+        const bool conOn = fl::genesisActive();
+        SDL_Scancode conKey = SDL_SCANCODE_GRAVE;
+        if (const fl::ModInfo* gm = fl::modActive("genesis")) {
+            std::string k = gm->opt("key", "grave");
+            if (k != "grave" && k != "`") { SDL_Scancode sc = SDL_GetScancodeFromName(k.c_str()); if (sc != SDL_SCANCODE_UNKNOWN) conKey = sc; }
+        }
+        bool conShown = false; double conIgnoreText = 0, conTouchToggle = 0;
+        double conTouchPending = 0, mapTouchToggle = 0;   // (three fingers wait a moment: four fingers are Minimap+)
+        std::deque<double> fingerDowns;                    // when the last fingers touched the screen (gestures)
+        auto together = [&](int n) { return (int)fingerDowns.size() >= n && nowSec() - fingerDowns[fingerDowns.size() - n] < 0.25; };
+        std::function<void()> conOpen, conClose; std::function<bool()> conCanOpen;
         int lastDevice = kIsAndroid ? DEV_TOUCH : kIsSwitch ? DEV_PAD : DEV_KEYBOARD;   // what the player used last
         bool sawKeyboard = false;
         bool navActive = false;                  // the logic thread is showing the outline
@@ -956,7 +1006,7 @@ int main(int argc, char** argv) {
                 static const bool inputLog = getenv("ISAAC_INPUT_LOG") != nullptr;   // (testing)
                 for (auto& ev : evs) {
                     if (inputLog) logf("[input] tick %u type %d code %d down %d at %.0f,%.0f\n", g_player.tick, ev.type, ev.code, ev.down, ev.x, ev.y);
-                    if (ev.type == 0) keyEvent(ev.code, ev.ascii, ev.down);
+                    if (ev.type == 0) { if (!(ev.code == 27 && ev.down && menuEscapeResumes())) keyEvent(ev.code, ev.ascii, ev.down); }
                     else if (ev.type == 1) {
                         if (ev.code == 1) tapOnButtons = touchButtonAt(ev.x, ev.y) || touchAnyButton();   // (see type 4)
                         menuMouse(ev.x, ev.y, ev.code); mouseEvent(ev.x, ev.y, ev.code);
@@ -979,10 +1029,16 @@ int main(int argc, char** argv) {
                 // with getTimer() % 100 draws; a frame clock (n * 33.3 ms) only gave 0, 33 or 66. Headless tests keep
                 // the frame clock (deterministic, like the Ruffle harness); ISAAC_FRAMECLOCK=1 forces it here too.
                 static const bool frameClock = getenv("ISAAC_FRAMECLOCK") != nullptr;
-                g_player.timeMs = frameClock ? n * 1000.0 / g_frameRate : (nowSec() - clockStart) * 1000.0;
+                // (while GenesisConsole pauses the game its clock stops too: the game measures some fades by getTimer()
+                // between ticks, and a long pause made the screen flash bright when it went on)
+                static double pausedSec = 0, lastNow = 0;
+                { double now = nowSec(); if (fl::genesisPausesGame() && lastNow > 0) pausedSec += now - lastNow; lastNow = now; }
+                g_player.timeMs = frameClock ? n * 1000.0 / g_frameRate : (nowSec() - clockStart - pausedSec) * 1000.0;
                 renderFreeRetired();   // (snapshots the renderer is done with: freed here, not on the render thread)
                 double t0 = nowSec();
-                runFrame(); runIntervals(); recompPatchesTick();
+                // (GenesisConsole open: the game is paused, the console keeps running)
+                if (!fl::genesisPausesGame()) { runFrame(); runIntervals(); recompPatchesTick(); } else { consoleTicks++; recompMusicTick(); }
+                fl::modsTick();
                 { bool ig = false, gp = recompInGameplay(&ig); menuUiTick(gp, ig); }
                 if (!cfg.gcAfterTick) gcCollect((nowSec() - t0) * 1000.0);
                 SnapPtr snap = buildSnapshot();
@@ -998,6 +1054,22 @@ int main(int argc, char** argv) {
                 // to the screen (it then doesn't count in the publish delay that sets the display margin)
                 if (cfg.gcAfterTick) gcCollect(snap->logicMs);
                 n++;
+                // Phase lock: with 30 ticks/s on a 60 / 120 Hz display each tick is shown over exactly 2 (4) frames. If a
+                // tick happens to be published just after a frame started, that frame can't use it (it shows a guess
+                // instead, extrapolating the previous motion - "HELD" in performance.txt) and the tick reaches the
+                // screen one frame later. The tick clock is nudged (at most 0.4 ms per tick, unnoticeable) until each
+                // tick is published ~1.5 ms before a frame starts: the input it read reaches the screen as soon as
+                // possible and no frame has to guess. Only the timing moves: the game itself is not affected.
+                {
+                    static double pubEst = 0.004;
+                    pubEst = std::max(snap->pubDelay, pubEst - 0.00002);   // (the recent worst, slowly forgotten)
+                    double P = framePeriod.load();
+                    static const bool off = getenv("ISAAC_NOPHASELOCK") != nullptr;   // (testing)
+                    if (P > 0 && !off) {
+                        double e = std::remainder(base + n * dt + pubEst + 0.0015 - framePhase.load(), P);   // > 0: lands after a frame start
+                        base -= std::max(-0.0004, std::min(0.0004, e * 0.15));
+                    }
+                }
                 if (snap->quit) break;
             }
         };
@@ -1040,7 +1112,31 @@ int main(int argc, char** argv) {
                 perfOn = !perfOn; perfLines.clear(); pw = PerfWin(); pwStart = nowSec();
                 if (perfOn) perfLog("--- diagnostics enabled (L3+R3) ---\n");
             }
+            {   // WideSaac's Minimap+: L3 alone (released without R3)
+                static bool l3Solo = false;
+                if (bDown & HidNpadButton_StickL) l3Solo = !(b & HidNpadButton_StickR);
+                if (bDown & HidNpadButton_StickR) l3Solo = false;
+                if (l3Solo && !(b & HidNpadButton_StickL)) { l3Solo = false; if (fl::wideMinimapAvailable()) fl::wideToggleMinimap(); }
+            }
             if (bDown) lastDevice = DEV_PAD;
+            if (conOn) {   // GenesisConsole: Minus opens it during a run; while open: A keyboard, X run, Y complete, B / Minus close
+                if (fl::genesisOpen()) {
+                    if (bDown && !SDL_IsScreenKeyboardShown(win)) {   // (the keyboard reads the controller itself)
+                        if (bDown & (HidNpadButton_B | HidNpadButton_Minus)) { conClose(); return; }
+                        if (bDown & HidNpadButton_A) SDL_StartTextInput();
+                        if (bDown & HidNpadButton_X) fl::genesisKey(fl::CK_ENTER);
+                        if (bDown & HidNpadButton_Y) fl::genesisKey(fl::CK_TAB);
+                        if (bDown & HidNpadButton_Up) fl::genesisKey(fl::CK_UP);
+                        if (bDown & HidNpadButton_Down) fl::genesisKey(fl::CK_DOWN);
+                        if (bDown & HidNpadButton_Left) fl::genesisKey(fl::CK_LEFT);
+                        if (bDown & HidNpadButton_Right) fl::genesisKey(fl::CK_RIGHT);
+                        if (bDown & HidNpadButton_L) fl::genesisKey(fl::CK_PGUP);
+                        if (bDown & HidNpadButton_R) fl::genesisKey(fl::CK_PGDN);
+                    }
+                    return;
+                }
+                if ((bDown & HidNpadButton_Minus) && conCanOpen()) { conOpen(); return; }
+            }
             const Snapshot* cs = renderCurrent();
             bool inGame = cs && cs->inGame, play = cs && cs->gameplay && !wiz.isOpen();
             const size_t N = sizeof(kPadMap) / sizeof(kPadMap[0]);
@@ -1179,6 +1275,13 @@ int main(int argc, char** argv) {
                 inject.push_back(j);
             }
         }
+        conCanOpen = [&]() { return conOn && !wiz.isOpen() && ctxNow().inGame; };
+        conOpen = [&]() {
+            touch.releaseAll(nowSec()); releaseAllKeys(); navOff();
+            fl::genesisSetOpen(true); conShown = true; conIgnoreText = nowSec() + 0.08;   // (the opening key's own character)
+            if (!kIsSwitch) SDL_StartTextInput();   // (Android: the on-screen keyboard; Switch: on A, it takes the screen)
+        };
+        conClose = [&]() { fl::genesisSetOpen(false); conShown = false; SDL_StopTextInput(); };
         auto backKey = [&]() {   // Android back button / gesture: pause in game, Esc in menus
             const Snapshot* cs = renderCurrent();
             int k = cs && cs->inGame ? 'P' : 27;
@@ -1252,9 +1355,21 @@ int main(int argc, char** argv) {
             Mat inv; stageToWindowFor(dw, dh).invert(inv); inv.apply(px, py, sx, sy);
         };
         auto pollInput = [&]() {
+            if (conShown && !fl::genesisOpen()) { conShown = false; SDL_StopTextInput(); }   // (closed by a command / the run ended)
             SDL_Event e;
             while (SDL_PollEvent(&e)) {
                 switch (e.type) {
+                    case SDL_TEXTINPUT:
+                        if (conOn && fl::genesisOpen() && nowSec() >= conIgnoreText) {
+                            fl::genesisText(e.text.text);
+#ifdef __SWITCH__
+                            fl::genesisKey(fl::CK_ENTER);   // (the Switch keyboard sends the whole line when it closes)
+#endif
+                        }
+                        break;
+                    case SDL_MOUSEWHEEL:
+                        if (conOn && fl::genesisOpen() && e.wheel.y) fl::genesisKey(e.wheel.y > 0 ? fl::CK_PGUP : fl::CK_PGDN);
+                        break;
                     case SDL_QUIT: running = false; break;
                     case SDL_WINDOWEVENT:
                         if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { touch.releaseAll(nowSec()); releaseAllKeys(); }   // avoid "stuck" keys
@@ -1273,6 +1388,32 @@ int main(int argc, char** argv) {
                     case SDL_APP_DIDENTERBACKGROUND: logicPaused = true; break;
                     case SDL_APP_WILLENTERFOREGROUND: case SDL_APP_DIDENTERFOREGROUND: logicPaused = false; break;
                     case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
+                        // Multi-finger gestures (GenesisConsole: 3, Minimap+: 4) count only when all those fingers went down
+                        // together (within 0.25 s): a thumb kept on a joystick plus a tap with two more is not a gesture
+                        if (e.type == SDL_FINGERDOWN) { fingerDowns.push_back(nowSec()); if (fingerDowns.size() > 8) fingerDowns.pop_front(); }
+                        if (e.type == SDL_FINGERDOWN && fl::wideMinimapAvailable()) {   // WideSaac: four fingers show / hide Minimap+
+                            int nf = SDL_GetNumTouchFingers(e.tfinger.touchId);
+                            if (nf >= 4 && together(4) && nowSec() > mapTouchToggle) {
+                                mapTouchToggle = nowSec() + 0.8; conTouchPending = 0;
+                                touch.releaseAll(nowSec()); fl::wideToggleMinimap();
+                                break;
+                            }
+                            if (nf == 3 && together(3) && conOn && !fl::genesisOpen() && nowSec() > conTouchToggle) {   // (maybe a fourth is coming)
+                                conTouchToggle = nowSec() + 0.8; conTouchPending = nowSec() + 0.2;
+                                break;
+                            }
+                        }
+                        if (conOn) {   // GenesisConsole: three fingers open / close it; a tap while open shows the keyboard
+                            if (e.type == SDL_FINGERDOWN && SDL_GetNumTouchFingers(e.tfinger.touchId) >= 3 && together(3) && nowSec() > conTouchToggle) {
+                                conTouchToggle = nowSec() + 0.8;
+                                if (fl::genesisOpen()) conClose(); else if (conCanOpen()) conOpen();
+                                break;
+                            }
+                            if (fl::genesisOpen()) {
+                                if (e.type == SDL_FINGERUP && SDL_GetNumTouchFingers(e.tfinger.touchId) == 0 && nowSec() > conTouchToggle) SDL_StartTextInput();
+                                break;
+                            }
+                        }
                         if (e.type == SDL_FINGERDOWN) { lastDevice = touchUI ? DEV_TOUCH : lastDevice; navOff(); }
                         if (wiz.isOpen()) {   // rebinding screen: taps on its rows
                             if (e.type == SDL_FINGERMOTION) break;
@@ -1295,6 +1436,7 @@ int main(int argc, char** argv) {
 #endif
                     case SDL_KEYDOWN: case SDL_KEYUP: {
                         bool down = e.type == SDL_KEYDOWN; SDL_Keycode sym = e.key.keysym.sym;
+                        if (sym == SDLK_AC_BACK && conOn && fl::genesisOpen()) { if (down && !e.key.repeat) conClose(); break; }
                         if (sym == SDLK_AC_BACK) { if (down && !e.key.repeat) { if (wiz.isOpen()) wiz.nav(NAV_BACK); else backKey(); } break; }
                         if (down && !e.key.repeat && (sym == SDLK_F11 || (sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) {
                             bool fs = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -1303,6 +1445,28 @@ int main(int argc, char** argv) {
                         if (down && !e.key.repeat && sym == SDLK_F3) { perfOn = !perfOn; perfLines.clear(); pw = PerfWin(); pwStart = nowSec(); if (perfOn) perfLog("--- diagnostics enabled (F3) ---\n"); break; }
                         if (down && sym == SDLK_F12) { static int sn = 0; char nm[64]; snprintf(nm, sizeof nm, "screenshot_%d.bmp", ++sn); renderScreenshot((pref + nm).c_str()); break; }
                         if (down && !e.key.repeat) { lastDevice = DEV_KEYBOARD; sawKeyboard = true; navOff(); }
+                        if (conOn && fl::genesisOpen()) {   // GenesisConsole: every key goes to it
+                            if (!down) break;
+                            bool ctrl = e.key.keysym.mod & KMOD_CTRL;
+                            if (e.key.keysym.scancode == conKey || sym == SDLK_ESCAPE) { if (!e.key.repeat) conClose(); break; }
+                            if (ctrl && sym == SDLK_v) { if (char* t = SDL_GetClipboardText()) { fl::genesisText(t); SDL_free(t); } break; }
+                            if (ctrl && (sym == SDLK_u || sym == SDLK_c)) { fl::genesisKey(fl::CK_CLEARLINE); break; }
+                            int ck = -1;
+                            switch (sym) {
+                                case SDLK_RETURN: case SDLK_KP_ENTER: ck = fl::CK_ENTER; break;
+                                case SDLK_BACKSPACE: ck = fl::CK_BACKSPACE; break; case SDLK_DELETE: ck = fl::CK_DELETE; break;
+                                case SDLK_LEFT: ck = fl::CK_LEFT; break; case SDLK_RIGHT: ck = fl::CK_RIGHT; break;
+                                case SDLK_UP: ck = fl::CK_UP; break; case SDLK_DOWN: ck = fl::CK_DOWN; break;
+                                case SDLK_HOME: ck = fl::CK_HOME; break; case SDLK_END: ck = fl::CK_END; break;
+                                case SDLK_TAB: ck = fl::CK_TAB; break;
+                                case SDLK_PAGEUP: ck = fl::CK_PGUP; break; case SDLK_PAGEDOWN: ck = fl::CK_PGDN; break;
+                                default: break;
+                            }
+                            if (ck >= 0) fl::genesisKey(ck);
+                            break;
+                        }
+                        if (conOn && down && !e.key.repeat && e.key.keysym.scancode == conKey && conCanOpen()) { conOpen(); break; }
+                        if (down && !e.key.repeat && sym == SDLK_m && fl::wideMinimapAvailable() && kbActionOf(SDLK_m) < 0) { fl::wideToggleMinimap(); break; }   // (WideSaac's Minimap+)
                         if (wiz.isOpen()) {
                             if (!down) break;
                             if (wiz.capturing()) { if (!e.key.repeat && !wiz.captureKey(sym) && sym == SDLK_ESCAPE) wiz.nav(NAV_BACK); break; }
@@ -1339,6 +1503,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                     case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
+                        if (conOn && fl::genesisOpen()) break;
                         if (e.type == SDL_MOUSEMOTION ? (e.motion.xrel || e.motion.yrel) : true) { navOff(); if (e.type == SDL_MOUSEBUTTONDOWN && !kIsAndroid && !kIsSwitch) lastDevice = DEV_KEYBOARD; }
                         int mx, my; SDL_GetMouseState(&mx, &my);
                         int ww, wh, dw, dh; SDL_GetWindowSize(win, &ww, &wh); SDL_GL_GetDrawableSize(win, &dw, &dh);
@@ -1385,6 +1550,24 @@ int main(int argc, char** argv) {
                         bool d = e.type == SDL_CONTROLLERBUTTONDOWN; int btn = e.cbutton.button;
                         int dpad = btn == SDL_CONTROLLER_BUTTON_DPAD_UP ? 0 : btn == SDL_CONTROLLER_BUTTON_DPAD_DOWN ? 1 : btn == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 2 : btn == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ? 3 : -1;
                         if (d) lastDevice = DEV_PAD;
+                        if (conOn && fl::genesisOpen()) {   // GenesisConsole: A keyboard, X run, Y complete, D-pad, LB / RB scroll, B close
+                            if (!d) break;
+                            switch (btn) {
+                                case SDL_CONTROLLER_BUTTON_A: SDL_StartTextInput(); break;
+                                case SDL_CONTROLLER_BUTTON_X: fl::genesisKey(fl::CK_ENTER); break;
+                                case SDL_CONTROLLER_BUTTON_Y: fl::genesisKey(fl::CK_TAB); break;
+                                case SDL_CONTROLLER_BUTTON_DPAD_UP: fl::genesisKey(fl::CK_UP); break;
+                                case SDL_CONTROLLER_BUTTON_DPAD_DOWN: fl::genesisKey(fl::CK_DOWN); break;
+                                case SDL_CONTROLLER_BUTTON_DPAD_LEFT: fl::genesisKey(fl::CK_LEFT); break;
+                                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: fl::genesisKey(fl::CK_RIGHT); break;
+                                case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: fl::genesisKey(fl::CK_PGUP); break;
+                                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: fl::genesisKey(fl::CK_PGDN); break;
+                                case SDL_CONTROLLER_BUTTON_B: case SDL_CONTROLLER_BUTTON_BACK: conClose(); break;
+                                default: break;
+                            }
+                            break;
+                        }
+                        if (conOn && d && btn == SDL_CONTROLLER_BUTTON_BACK && conCanOpen()) { conOpen(); break; }
                         if (!d) {   // release: whatever the press sent
                             if (dpad >= 0) { navDpad[dpad] = false; if (dpadDir == dpad) dpadDir = -1; }
                             auto h = padBtnHeld.find(btn); if (h == padBtnHeld.end()) break;
@@ -1406,6 +1589,8 @@ int main(int argc, char** argv) {
                             if (btn == SDL_CONTROLLER_BUTTON_A) { navSink(NAV_CONFIRM); break; }
                             if (btn == SDL_CONTROLLER_BUTTON_B) { navSink(NAV_BACK); break; }
                         }
+                        if (btn == SDL_CONTROLLER_BUTTON_LEFTSTICK && cx.play && fl::wideMinimapAvailable() &&
+                            (!g_bind.padCustom || padActionOf(btn) < 0 || padActionOf(btn) == A_PAUSE)) { fl::wideToggleMinimap(); break; }   // (Minimap+)
                         auto it = kMap.find(btn);
                         int code;
                         if (cx.play) code = padGameCode(btn, it == kMap.end() ? 0 : it->second.game);
@@ -1495,7 +1680,7 @@ int main(int argc, char** argv) {
             }
             if (nowSec() - lastLearnSave > 20) { lastLearnSave = nowSec(); saveLearned(preloadPath); }   // new graphics → preload.txt
             pollInput();
-            while (injectPos < inject.size() && inject[injectPos].tick <= g_player.tick) {   // (testing)
+            while (injectPos < inject.size() && inject[injectPos].tick <= g_player.tick + consoleTicks.load()) {   // (testing)
                 Inject& j = inject[injectPos++];
                 if (j.op == "down" || j.op == "move" || j.op == "up") {
                     SDL_Event e{}; e.type = j.op == "down" ? SDL_FINGERDOWN : j.op == "move" ? SDL_FINGERMOTION : SDL_FINGERUP;
@@ -1508,11 +1693,18 @@ int main(int argc, char** argv) {
                     else { e.type = v ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP; e.cbutton.button = (Uint8)a; }
                     SDL_PushEvent(&e);
                 }
+                else if (j.op == "key" || j.op == "kdown" || j.op == "kup") {   // "key|kdown|kup <SDL key name>" (key: pressed and released)
+                    SDL_Event e{}; e.key.keysym.sym = SDL_GetKeyFromName(j.arg.c_str()); e.key.keysym.scancode = SDL_GetScancodeFromName(j.arg.c_str());
+                    if (j.op != "kup") { e.type = SDL_KEYDOWN; SDL_PushEvent(&e); }
+                    if (j.op != "kdown") { e.type = SDL_KEYUP; SDL_PushEvent(&e); }
+                }
+                else if (j.op == "text") { SDL_Event e{}; e.type = SDL_TEXTINPUT; snprintf(e.text.text, sizeof e.text.text, "%s", j.arg.c_str()); SDL_PushEvent(&e); }
                 else if (j.op == "shot") injectShot = j.arg;
                 else if (j.op == "eval") { std::lock_guard<std::mutex> lk(inMu); evalQ.push_back(j.arg); }
                 else if (j.op == "quit") running = false;
             }
             if (touchUI) touch.update(touchCtx(), nowSec());
+            if (conTouchPending > 0 && nowSec() >= conTouchPending) { conTouchPending = 0; if (conCanOpen()) conOpen(); }   // (three fingers, no fourth)
             {   // rebinding screen: opened from the game's Control options page (menuui.cpp), saved when closed
                 const Snapshot* cs = renderCurrent();
                 if (cs && cs->rebindRequests != lastRebindReq) { lastRebindReq = cs->rebindRequests; if (!wiz.isOpen()) openRebind(); }
@@ -1540,6 +1732,16 @@ int main(int argc, char** argv) {
                 if (std::fabs(measured - expect) > period * 0.5) present = measured;   // dropped frame or drift: resync
                 else present = expect + (measured - expect) * 0.05;
             } else present = fstart;
+            {   // phase lock (logic loop): where frames start, as a smoothed circular mean of fstart modulo the period
+                static double pc = 0, ps = 0;
+                double ratio = dt / period;
+                if (vsyncOn && !preloading && std::fabs(ratio - std::round(ratio)) < 0.03) {
+                    double ang = 2 * M_PI * std::fmod(fstart, period) / period;
+                    pc = pc * 0.9 + std::cos(ang) * 0.1; ps = ps * 0.9 + std::sin(ang) * 0.1;
+                    double ph = std::atan2(ps, pc) / (2 * M_PI) * period; if (ph < 0) ph += period;
+                    framePhase = ph; framePeriod = period;
+                } else framePeriod = 0;
+            }
             // adaptive margin: the worst recent logic publish time (+2 ms)
             // (90th percentile: an isolated heavy tick, such as loading a room, doesn't raise the margin)
             double worst = 0;

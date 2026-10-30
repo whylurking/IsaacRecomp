@@ -22,6 +22,7 @@ int uiHitRow(double sx, double sy);        // main thread: row at a stage point 
 // ---- logic thread
 enum { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT, NAV_CONFIRM, NAV_BACK, NAV_OFF };
 void padNavEvent(int code);
+bool menuEscapeResumes();   // Escape pressed: on the pause screen it resumes instead (true: handled)
 void menuMouse(double sx, double sy, int type);   // real mouse / touch events (before the game sees them)
 void menuUiTick(bool gameplay, bool inGame);      // after the frame's scripts, before the snapshot
 void menuUiFill(Snapshot& s);                     // focus outline, rebinding requests, game settings

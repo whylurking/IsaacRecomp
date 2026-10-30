@@ -52,7 +52,17 @@ struct EditTextObj final : DisplayObject {
     EditTextDef* def = nullptr;
     std::string text; uint32_t argb = 0xff000000;
     uint32_t version = 1;      // unique content identifier (invalidates the render cache)
-    void setText(const std::string& t) { static uint32_t g = 1; if (t != text || version == 1) { text = t; version = ++g; } }
+    // version: identifies the content for the render cache. It's a hash of the text and colour (the rest is in the
+    // definition), so a field showing a text it showed before (a counter, a timer's digit) reuses that raster
+    // instead of rasterizing and uploading it again.
+    void setText(const std::string& t) {
+        uint32_t h = 2166136261u;
+        for (unsigned char c : t) { h ^= c; h *= 16777619u; }
+        for (int i = 0; i < 4; i++) { h ^= (argb >> (i * 8)) & 0xff; h *= 16777619u; }
+        if (h <= 1) h += 2;
+        if (t == text && h == version) return;
+        text = t; version = h;
+    }
 };
 
 struct ButtonObj final : DisplayObject {
@@ -74,6 +84,7 @@ struct MovieClip final : DisplayObject {
     MovieClip* execNext = nullptr;
     int streamChan = -1;          // audio channel of the timeline stream
     int lastStreamFrame = -1;
+    int reqFrame = 0;             // the frame last asked for with gotoAndStop / gotoAndPlay (it may be past the last one)
     void trace(Tracer& tr) override;
 
     DisplayObject* childAtDepth(int d) const;
@@ -108,8 +119,17 @@ struct BitmapData final : Object {
         if (x1 <= x0 || y1 <= y0) return;
         if (dx1 <= dx0) { dx0 = x0; dy0 = y0; dx1 = x1; dy1 = y1; }
         else { if (x0 < dx0) dx0 = x0; if (y0 < dy0) dy0 = y0; if (x1 > dx1) dx1 = x1; if (y1 > dy1) dy1 = y1; }
+        if (fillKnown) for (int y = y0; y < y1; y++) {
+            uint32_t& sp = rowSpan[y]; int a = sp & 0xffff, b = sp >> 16;
+            if (b <= a) { a = x0; b = x1; } else { if (x0 < a) a = x0; if (x1 > b) b = x1; }
+            sp = (uint32_t)a | (uint32_t)b << 16;
+        }
         version++;
     }
+    // (PSP) after a fillRect of the whole bitmap: its colour, and per row the span changed since (fillRect then only
+    // has to clear those: every tick the game clears a 300x300 bitmap used as a table of colliding pairs, and sets a
+    // few hundred pixels in it)
+    bool fillKnown = false; uint32_t fillVal = 0; std::vector<uint32_t> rowSpan;
     ~BitmapData() override;
 };
 
@@ -160,6 +180,10 @@ bool removeMovieClip(DisplayObject* d);
 bool swapDepths(DisplayObject* d, const Value& target);
 MovieClip* attachMovie(MovieClip* parent, const std::string& linkName, Str* newName, int depth, Object* init);
 MovieClip* createEmptyMovieClip(MovieClip* parent, Str* name, int depth);
+MovieClip* newDetachedClip();   // an empty clip on no display list (mods: drawn only through SnapOv::extra)
+// (mods) clips sent to a frame number past their last one (>= 100): the requested number is in reqFrame. Kept alive
+// in this array (one Value per clip) until the mod that reads it drops them.
+extern Object* g_overFrames;
 int frameFromValue(MovieClip* c, const Value& v, MovieClip** target);
 bool hitTestPoint(DisplayObject* d, double gx, double gy, bool shapeFlag);
 Mat worldMatrix(DisplayObject* d);

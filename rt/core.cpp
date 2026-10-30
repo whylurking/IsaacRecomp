@@ -48,6 +48,7 @@ static void strCacheDropDead();
 static std::vector<GcObj*> g_sweep; static size_t g_sweepPos = 0;
 // Freeing is time-budgeted (not by object count): on Switch freeing an object costs several times more than on
 // PC, and 60,000 at once took ~150 ms in a single tick.
+static void internForget(Str* s);
 static void sweepSome(double budgetMs) {
     auto t0 = std::chrono::steady_clock::now();
     while (g_sweepPos < g_sweep.size()) {
@@ -55,7 +56,7 @@ static void sweepSome(double budgetMs) {
         for (; g_sweepPos < end; g_sweepPos++) {
             GcObj* o = g_sweep[g_sweepPos];
             if (o->marked || o->pinned) { o->marked = 0; g_heap.push_back(o); }
-            else delete o;
+            else { if (o->weakAtom) internForget((Str*)o); delete o; }
         }
         if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) break;
     }
@@ -65,6 +66,8 @@ double g_gcMs = 0;   // accumulated time spent in the collector (F3 diagnostics)
 // The collector never takes the tick past this (logic + GC, ms; a tick has 33 ms): when it went up to 18 ms
 // of sweeping on top of a busy tick, logic missed its deadline and the render thread stuttered.
 static constexpr double kGcTickTargetMs = 12.0;
+bool (*g_gcMemPressure)() = nullptr;   // (PSP) true when memory runs low: collect now
+void gcStats(size_t* objects, size_t* lastLive, size_t* extBytes) { *objects = g_heap.size(); *lastLive = g_lastLive; *extBytes = g_extBytes; }
 void gcCollect(double tickMs) {
     if (!g_sweep.empty()) {   // a few ms per tick until done
         auto s0 = std::chrono::steady_clock::now();
@@ -76,10 +79,11 @@ void gcCollect(double tickMs) {
         g_gcMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - s0).count();
         return;
     }
-    size_t trig = std::max(g_lastLive, g_lim.gcMinLive) * 2;
-    if (g_heap.size() < trig && g_extBytes < g_lim.extGcBytes) return;
+    size_t trig = (size_t)(std::max(g_lastLive, g_lim.gcMinLive) * g_lim.gcGrowth);
+    bool pressure = g_gcMemPressure && g_heap.size() > g_lim.gcMinLive / 2 && g_gcMemPressure();
+    if (g_heap.size() < trig && g_extBytes < g_lim.extGcBytes && !pressure) return;
     // a heavy tick (room load, explosion...) postpones the mark to a lighter one, unless the heap is far over
-    if (tickMs > kGcTickTargetMs * 0.6 && g_heap.size() < trig + trig / 2) return;
+    if (tickMs > kGcTickTargetMs * 0.6 && g_heap.size() < trig + trig / 2 && !pressure) return;
     g_extBytes = 0;
     auto t0 = std::chrono::steady_clock::now(); size_t before = g_heap.size();
     Tracer tr;
@@ -168,7 +172,7 @@ static void classify(Str* s) {
 Str* intern(std::string_view sv) {
     if (!g_intern) g_intern = new std::unordered_map<std::string_view, Str*, SVHash>(1 << 14);
     auto it = g_intern->find(sv);
-    if (it != g_intern->end()) return it->second;
+    if (it != g_intern->end()) { Str* f = it->second; if (f->weakAtom) { f->weakAtom = 0; f->pinned = 1; } return f; }
     Str* s = new Str(std::string(sv));
     s->onHeap = 1; s->pinned = 1; s->interned = true; s->atom = s;
     classify(s);
@@ -176,6 +180,21 @@ Str* intern(std::string_view sv) {
     g_intern->emplace(std::string_view(s->s), s);
     return s;
 }
+// Flash names every unnamed instance ("instance12345", a global counter): pinned forever, those names were the one
+// thing that grew without limit in a long session (~250 KB per hour). They are interned weakly instead: freed with
+// their object, unless a script used the name as a key (atomOf / intern pin it then).
+Str* internWeak(std::string_view sv) {
+    if (!g_intern) g_intern = new std::unordered_map<std::string_view, Str*, SVHash>(1 << 14);
+    auto it = g_intern->find(sv);
+    if (it != g_intern->end()) return it->second;
+    Str* s = new Str(std::string(sv));
+    s->onHeap = 1; s->weakAtom = 1; s->interned = true; s->atom = s;
+    classify(s);
+    gcRegister(s);
+    g_intern->emplace(std::string_view(s->s), s);
+    return s;
+}
+static void internForget(Str* s) { auto it = g_intern->find(std::string_view(s->s)); if (it != g_intern->end() && it->second == s) g_intern->erase(it); }
 static std::unordered_map<std::string, size_t>* g_strProf;
 static void strProfDump() {
     std::vector<std::pair<size_t, std::string>> v; for (auto& kv : *g_strProf) v.push_back({kv.second, kv.first});
@@ -327,7 +346,7 @@ double strToNum(const std::string& str) {
     return strtod(std::string(s + start, i - start).c_str(), nullptr);
 }
 
-int32_t toInt32(double d) {
+int toInt32(double d) {
     if (!std::isfinite(d)) return 0;
     if (d >= -2147483648.0 && d <= 2147483647.0) return (int32_t)d;
     double m = std::fmod(std::trunc(d), 4294967296.0);
@@ -532,6 +551,9 @@ static int32_t avmRandom() {
     return r & 0x7FFFFFFF;
 }
 bool g_rngSeedFixed = false;
+// (mods) the generator's state, to call game functions that might draw random numbers without changing the run
+void rngSave(uint32_t* state, uint64_t* calls) { *state = g_rngU; *calls = g_rngCalls; }
+void rngRestore(uint32_t state, uint64_t calls) { g_rngU = state; g_rngCalls = calls; }
 double randomDouble() { rngTrace("Math.random"); return (double)avmRandom() / 2147483648.0; }
 Value randomNumber(const Value& maxv) {
     double d = toNum(maxv);
@@ -617,8 +639,31 @@ bool hasProp(Object* o, Str* k) {
     return false;
 }
 
+// hasProp(o, k) ? getProp(o, k) in one walk of the prototype chain (variable lookups along the scope chain)
+static bool tryGetProp(Object* o, Str* k, Value& out) {
+    if (FL_UNLIKELY(isRemovedDO(o))) { DisplayObject* r = doResolveRemoved((DisplayObject*)o); if (!r) return false; o = r; }
+    Object* p = o;
+    for (int depth = 0; p && depth < 64; depth++, p = p->proto) {
+        int i = p->props.find(k);
+        if (i >= 0) { const Value& v = p->props.v[i].v; if (v.t == T_HOLE) return false; out = v; return true; }
+        if (p->kind == OK_ARRAY) {
+            Array* a = (Array*)p;
+            if (k->arrIdx >= 0 && (size_t)k->arrIdx < a->el.size() && a->el[k->arrIdx].t != T_HOLE) { out = a->el[k->arrIdx]; return true; }
+            if (k == atoms::length) { out = Value((double)a->el.size()); return true; }
+        } else if (p->isDisplay()) {
+            if (doHasSpecial((DisplayObject*)p, k)) { out = getProp(o, k); return true; }
+        }
+    }
+    return false;
+}
+WriteGuardFn g_writeGuard = nullptr;
+static void setPropRaw(Object* o, Str* k, const Value& v);
 void setProp(Object* o, Str* k, const Value& v) {
     if (FL_UNLIKELY(isRemovedDO(o))) { DisplayObject* r = doResolveRemoved((DisplayObject*)o); if (!r) return; o = r; }
+    if (FL_UNLIKELY(o->guarded) && g_writeGuard) { Value w = v; if (g_writeGuard(o, k, w)) setPropRaw(o, k, w); return; }
+    setPropRaw(o, k, v);
+}
+static void setPropRaw(Object* o, Str* k, const Value& v) {
     switch (o->kind) {
         case OK_ARRAY: {
             Array* a = (Array*)o;
@@ -693,7 +738,7 @@ void setMemK(const Value& obj, Str* k, const Value& v) {
 }
 void setMem(const Value& obj, const Value& key, const Value& v) {
     if (obj.t != T_OBJ) return;
-    if (obj.o->kind == OK_ARRAY && key.t == T_NUM) {
+    if (obj.o->kind == OK_ARRAY && key.t == T_NUM && FL_LIKELY(!obj.o->guarded)) {
         Array* a = (Array*)obj.o; double n = key.n;
         if (n >= 0 && n == (int64_t)n && n < 50000000) {
             size_t i = (size_t)n;
@@ -727,10 +772,8 @@ Value getVarK(Act& a, Str* name) {
         Object* v = s->values;
         if (!v) continue;
         if (FL_UNLIKELY(isRemovedDO(v))) { v = a.target && !a.target->removed ? (Object*)a.target : (Object*)vm.root; }
-        // fast path: own property
-        int i = v->props.find(name);
-        if (i >= 0 && v->props.v[i].v.t != T_HOLE) return v->props.v[i].v;
-        if (hasProp(v, name)) return getProp(v, name);
+        Value out;
+        if (tryGetProp(v, name, out)) return out;
     }
     return getVarSlow(a, name);
 }

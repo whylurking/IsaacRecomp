@@ -353,9 +353,34 @@ class Gen:
         g = FnGen(s, name, insts, 'frame', dbg=dbg)
         s.funcs.append((name, g.render(), 'extern'))
 
+def room_scale_patch(insts, S):
+    """(--room-scale S, PSP) the room layers (floor, blood, gibs: BitmapData of gridxs x gridys) at scale S instead of
+    the game's lowest tier (640x480 at hdx = 1): the tier is the game's own quality setting (800x620 at 1.25, 1100x800
+    at 1.667), the layers are drawn scaled by hdx and shown at 100/hdx %. Only the bitmaps change: the collision grid,
+    sized from gridxs/gridys too, keeps the 640x480 tier's size. Returns the number of places patched (0 or 3)."""
+    def push(i, *vals): return insts[i].op == 0x96 and insts[i].args == list(vals)
+    n = 0
+    for i in range(len(insts) - 5):
+        if push(i, ('str', 'gridxs'), ('num', 640)) and push(i + 2, ('str', 'gridys'), ('num', 480)) and push(i + 4, ('str', 'hdx'), ('num', 1)):
+            insts[i].args = [('str', 'gridxs'), ('num', (int(round(640 * S)) + 3) & ~3)]   # (a multiple of 4: GE textures in place)
+            insts[i + 2].args = [('str', 'gridys'), ('num', int(round(480 * S)))]
+            insts[i + 4].args = [('str', 'hdx'), ('num', S)]
+            n += 1
+    for name, full in (('xenf', 640), ('yenf', 480)):
+        var = 'gridxs' if name == 'xenf' else 'gridys'
+        for i in range(len(insts) - 1):
+            if push(i, ('str', name), ('str', var)) and insts[i + 1].op == 0x1C:   # name = (gridxs - ...): 640 instead
+                insts[i].args = [('str', name), ('num', full)]
+                insts[i + 1].op = 0x4A; insts[i + 1].name = 'ToNumber'
+                n += 1
+    return n
+
 def main():
     args = sys.argv[1:]
     ns = args[args.index('--ns') + 1]; del args[args.index('--ns'):args.index('--ns') + 2]
+    room_scale = None
+    if '--room-scale' in args:
+        room_scale = float(args[args.index('--room-scale') + 1]); del args[args.index('--room-scale'):args.index('--room-scale') + 2]
     title = ns
     if '--title' in args: title = args[args.index('--title') + 1]; del args[args.index('--title'):args.index('--title') + 2]
     src, outdir = args[0], args[1]
@@ -370,6 +395,9 @@ def main():
             key = (owner, frame + 1)
             idx = counters.get(key, 0); counters[key] = idx + 1
             insts = decode_block(d, start, end, None)
+            if room_scale:
+                k = room_scale_patch(insts, room_scale)
+                if k: print('room layers at scale %g: sprite %d (%d places)' % (room_scale, owner, k)); assert k == 3
             name = 's_%d_%d_%d' % (owner, frame + 1, idx)
             G.frame(name, insts, name)
             G.frame_entries.append((owner, frame + 1, idx, name))

@@ -1877,7 +1877,11 @@ void PVG_FT_Outline_Get_CBox(const PVG_FT_Outline* outline, PVG_FT_BBox* acbox)
       static __thread char* tl_pool = NULL;
       static __thread size_t tl_len = 0;
       if(tl_pool == NULL) {
+#ifdef __PSP__
+          tl_len = 1024 * 1024;   /* (PSP: memory is short; bigger shapes take more bands, a grown pool is not kept) */
+#else
           tl_len = 1024 * 1024 * 2;
+#endif
           tl_pool = (char*)malloc(tl_len);
           if(tl_pool == NULL) tl_len = 0;
       }
@@ -1900,8 +1904,12 @@ void PVG_FT_Outline_Get_CBox(const PVG_FT_Outline* outline, PVG_FT_BBox* acbox)
               rendered_spans += -worker.skip_spans;
           worker.skip_spans = rendered_spans;
           error = gray_raster_render(&worker, heap, length, params);
+#ifdef __PSP__
+          free(heap);
+#else
           if(buf == tl_pool) { free(tl_pool); tl_pool = heap; tl_len = length; buf = heap; }
           else free(heap);
+#endif
       }
   }
 

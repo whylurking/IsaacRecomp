@@ -30,11 +30,17 @@ static void addBitmap(Snapshot& s, BitmapData* b) {
         if (b->dx1 <= b->dx0 || b->dy1 <= b->dy0) return;   // unchanged
         x0 = b->dx0; y0 = b->dy0; x1 = b->dx1; y1 = b->dy1;
     }
+#ifdef __PSP__
+    // (PSP: one thread, and the GE is idle between frames: straight into the renderer's texture, without a copy)
+    extern void pspBitmapUpload(uint32_t uid, int w, int h, int x0, int y0, int x1, int y1, const uint32_t* px);
+    pspBitmapUpload(b->uid, b->w, b->h, x0, y0, x1, y1, b->px.data());
+#else
     BitmapUpload up; up.uid = b->uid; up.w = b->w; up.h = b->h; up.x0 = x0; up.y0 = y0; up.x1 = x1; up.y1 = y1;
     int w = x1 - x0;
     up.px.resize((size_t)w * (y1 - y0));
     for (int y = y0; y < y1; y++) memcpy(up.px.data() + (size_t)(y - y0) * w, b->px.data() + (size_t)y * b->w + x0, (size_t)w * 4);
     s.uploads.push_back(std::move(up));
+#endif
     b->sentW = b->w; b->sentH = b->h;
     g_sent.insert(b);
     b->dx0 = b->dx1 = b->dy0 = b->dy1 = 0;
@@ -48,13 +54,14 @@ static void addNode(Snapshot& s, DisplayObject* d, int32_t parent) {
         n.uid = d->uid; n.parent = parent; n.objKind = (uint8_t)d->kind;
         n.visible = d->visible; n.clipDepth = d->clipDepth; n.depth = d->depth;
         n.m = d->m; n.cx = d->cx; n.ratio = d->ratio;
+        if (!g_snapOv.empty()) { auto it = g_snapOv.find(d); if (it != g_snapOv.end()) { if (it->second.hide) n.visible = false; if (it->second.hasM) n.m = it->second.m; if (it->second.hasCx) n.cx = it->second.cx * n.cx; if (it->second.alpha >= 0) { n.cx.am *= it->second.alpha; n.cx.aa *= it->second.alpha; } } }
         for (auto& f : d->filters) if (f.type == 1 && (f.blurX > 0.5f || f.blurY > 0.5f)) { n.blur = true; n.blurX = f.blurX; n.blurY = f.blurY; n.blurPasses = f.passes; }
         switch (d->kind) {
             case OK_CLIP: case OK_BUTTON: n.kind = SN_CONTAINER; break;
             case OK_BITMAP: {
                 n.kind = SN_BITMAP;
                 BitmapObj* bo = (BitmapObj*)d;
-                if (bo->bd) { BitmapData* b = bo->bd; addBitmap(s, b); n.bmUid = b->uid; n.bmW = b->w; n.bmH = b->h; n.smoothing = bo->smoothing; }
+                if (bo->bd) { BitmapData* b = bo->bd; addBitmap(s, b); n.bmUid = b->uid; n.bmW = b->w; n.bmH = b->h; n.smoothing = bo->smoothing; if (kPxABGR && b->px.size() >= (size_t)b->w * b->h) n.bmPx = b->px.data(); }
                 break;
             }
             case OK_SHAPE: case OK_MORPH: case OK_TEXT: case OK_EDITTEXT: {
@@ -68,8 +75,13 @@ static void addNode(Snapshot& s, DisplayObject* d, int32_t parent) {
             default: n.kind = SN_CONTAINER; break;
         }
     }
-    if (d->kind == OK_CLIP) for (DisplayObject* k : ((MovieClip*)d)->kids) addNode(s, k, (int32_t)idx);
-    else if (d->kind == OK_BUTTON) for (DisplayObject* k : ((ButtonObj*)d)->kids) addNode(s, k, (int32_t)idx);
+    const SnapOv* ov = nullptr;
+    if (!g_snapOv.empty()) { auto it = g_snapOv.find(d); if (it != g_snapOv.end()) ov = &it->second; }
+    if (!ov || !ov->hideKids) {
+        if (d->kind == OK_CLIP) for (DisplayObject* k : ((MovieClip*)d)->kids) addNode(s, k, (int32_t)idx);
+        else if (d->kind == OK_BUTTON) for (DisplayObject* k : ((ButtonObj*)d)->kids) addNode(s, k, (int32_t)idx);
+    }
+    if (ov && ov->extra) { DisplayObject* x = ov->extra; addNode(s, x, (int32_t)idx); }
     s.nodes[idx].end = (uint32_t)s.nodes.size();
 }
 
@@ -125,6 +137,8 @@ void gpuDraw(BitmapData* b, Object* src, const Mat& m, const CX* cx) {
         SnapNode n; n.uid = 0xffffffffu; n.end = 1; n.kind = SN_BITMAP; n.objKind = OK_BITMAP; n.bmUid = sb->uid; n.bmW = sb->w; n.bmH = sb->h; n.smoothing = true;
         sc->nodes.push_back(n);
     } else if (src->isDisplay()) {
+        static const bool opLog = getenv("ISAAC_GPUOPLOG") != nullptr;   // (testing)
+        if (opLog) { DisplayObject* d = (DisplayObject*)src; logf("[gpudraw] tick %u into %ux%u: %s (char %u, kind %d, %zu kids)\n", g_player.tick, b->w, b->h, d->name ? d->name->s.c_str() : "-", d->charId, (int)d->kind, d->kind == OK_CLIP ? ((MovieClip*)d)->kids.size() : (size_t)0); }
         addNode(*sc, (DisplayObject*)src, -1);
         if (sc->nodes.empty()) return;
         // BitmapData.draw does not apply the source's own matrix, color or visibility
@@ -134,8 +148,13 @@ void gpuDraw(BitmapData* b, Object* src, const Mat& m, const CX* cx) {
     g_gpuOps.push_back(std::move(op));
 }
 
+ViewReq g_viewReq;
+std::unordered_map<DisplayObject*, SnapOv> g_snapOv;
+std::atomic<float> g_windowAspect{0.f};
 SnapPtr buildSnapshot() {
     SnapPtr s = std::make_shared<Snapshot>();
+    if (g_viewReq.set) { s->viewSet = true; s->viewClip = g_viewReq.clip; for (int i = 0; i < 4; i++) s->view[i] = g_viewReq.r[i]; }
+    if (g_viewReq.set && g_viewReq.cut) { s->viewCut = true; for (int i = 0; i < 4; i++) s->cut[i] = g_viewReq.c[i]; }
     s->tick = g_player.tick; s->serial = ++g_serial; s->main = true;
     s->gpuOps.swap(g_gpuOps);
     s->bgColor = g_movie.bgColor;

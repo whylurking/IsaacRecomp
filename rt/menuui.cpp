@@ -19,6 +19,7 @@
 #include "platform.h"
 
 namespace fl {
+extern std::vector<std::function<void(Tracer&)>> g_rootTracers;
 
 void visibleButtons(std::vector<ButtonObj*>& out);
 ButtonObj* topButtonAt(double x, double y);
@@ -119,6 +120,44 @@ static uint16_t handwritten(const char* text, float H, uint32_t argb, float* out
     s->layers.push_back(L);
     return g_synth[key] = addChar(s);
 }
+#include "menuui_caps.inc"
+// Any text in the same marker style (the mods' menu texts): capitals, digits and a few signs from kHandCaps; small
+// letters as small capitals (y from 0.36 down). H = cap height.
+static uint16_t handText(const std::string& text, float H, uint32_t argb, float* outW) {
+    char key[200]; snprintf(key, sizeof key, "H%s|%.1f|%08x", text.c_str(), H, argb);
+    const float sw = 0.17f * H, spacing = 0.15f, space = 0.34f;
+    auto cap = [](char c) -> const HandCap* { char u = (char)toupper((unsigned char)c); for (auto& g : kHandCaps) if (g.c == u) return &g; return nullptr; };
+    float x = 0;
+    for (char c : text) { const HandCap* g = cap(c); bool small = c >= 'a' && c <= 'z'; x += g ? (g->w * (small ? 0.78f : 1) + spacing) * H : space * H; }
+    if (outW) *outW = x;
+    auto it = g_synth.find(key); if (it != g_synth.end()) return it->second;
+    auto* s = new ShapeDef(); s->type = CH_SHAPE;
+    ShapeLayer L; LineStyle ls; ls.width = sw; ls.argb = argb; ls.startCap = ls.endCap = 0; ls.join = 0; ls.noClose = true;
+    L.lines.push_back(ls);
+    Path path; uint32_t seed = 11;
+    auto jitter = [&]() { seed = seed * 1103515245u + 12345u; return ((seed >> 16) % 1000 / 1000.0f - 0.5f) * 0.03f; };
+    x = 0;
+    for (char c : text) {
+        const HandCap* g = cap(c);
+        if (!g) { x += space * H; continue; }
+        bool small = c >= 'a' && c <= 'z';
+        float kx = small ? 0.78f : 1, ky = small ? 0.64f : 1, y0 = small ? 0.36f : 0;
+        float rot = jitter() * 1.2f, dy = jitter() * 0.6f;
+        bool start = true;
+        for (int i = 0; i < g->n; i++) {
+            float gx = g->pts[2 * i], gy = g->pts[2 * i + 1];
+            if (std::isnan(gx)) { start = true; continue; }
+            float py = y0 + gy * ky + jitter() + dy, px = gx * kx + jitter() + (py - 0.5f) * rot;
+            path.verbs.push_back(start ? 0 : 1); path.pts.push_back(x + px * H); path.pts.push_back(py * H);
+            start = false;
+        }
+        x += (g->w * kx + spacing) * H;
+    }
+    L.linePaths.push_back(path);
+    s->bounds = {-sw, -sw, x + sw, H + sw};
+    s->layers.push_back(L);
+    return g_synth[key] = addChar(s);
+}
 static DisplayObject* put(MovieClip* parent, uint16_t id, int depth, double x, double y, const char* name = nullptr) {
     if (!id) return nullptr;
     PlaceCmd pc; pc.hasMatrix = true; pc.m.tx = x; pc.m.ty = y;
@@ -131,6 +170,13 @@ static DisplayObject* putText(MovieClip* parent, int depth, double x, double y, 
     if (d && d->kind == OK_EDITTEXT) ((EditTextObj*)d)->setText(text);
     return d;
 }
+
+// (shared with the mods: mods.h)
+uint16_t synthAddChar(CharDef* d) { return addChar(d); }
+uint16_t synthRect(float w, float h, uint32_t argb) { return rectShape(w, h, argb); }
+uint16_t synthHandText(const std::string& text, float H, uint32_t argb, float* outW) { return handText(text, H, argb, outW); }
+uint16_t synthTextField(float w, float size, uint32_t argb, int align) { return textField(w, size, argb, align); }
+DisplayObject* synthPut(MovieClip* parent, uint16_t id, int depth, double x, double y, const char* name) { return put(parent, id, depth, x, y, name); }
 
 // ============================================================ "REBIND CONTROLS" on the Control options page
 // The options sheet (_root.paus: _root.pauss in the menus, _root.hud.paus during a run) shows "Control options" on
@@ -253,6 +299,9 @@ static bool itemIcon(ButtonObj* b) {
     DisplayObject* sheet = p->parent;
     return sheet && sheet->name && sheet->name->s == "paus" && sheet->parent && sheet->parent->name && sheet->parent->name->s == "hud";
 }
+// (mods) more options drawn by a mod (The Gone's items in the collection): their stage rectangles, set every tick
+static std::vector<std::pair<DisplayObject*, RectF>> g_menuExtras;
+void menuSetExtras(const std::vector<std::pair<DisplayObject*, RectF>>& v) { g_menuExtras = v; }
 static std::vector<Cand> candidates() {
     std::vector<Cand> out;
     std::vector<ButtonObj*> bs; visibleButtons(bs);
@@ -308,6 +357,8 @@ static std::vector<Cand> candidates() {
         for (auto& o : out) if (std::fabs(o.cx - c.cx) < 6 && std::fabs(o.cy - c.cy) < 6) { o = c; dup = true; break; }
         if (!dup) out.push_back(c);
     }
+    if (!g_modalBtn)   // (a mod's options: on the screen it drew them on, not under a dialog)
+        for (auto& e : g_menuExtras) if (e.first && e.second.valid()) out.push_back({e.first, e.second, (e.second.x0 + e.second.x1) / 2, (e.second.y0 + e.second.y1) / 2, nullptr});
     // under such a full-screen button, only what the mouse could still click: the pause screen's own options stay
     // in the display list under the in-game "are you sure?" note
     if (g_modalBtn) {
@@ -323,7 +374,8 @@ static const Cand* findFocus(const std::vector<Cand>& cs) {
     return nullptr;
 }
 static void hover(const Cand& c) {
-    if (c.d->kind == OK_BUTTON) mouseEvent(c.cx, c.cy, 0);
+    bool extra = false; for (auto& e : g_menuExtras) extra |= e.first == c.d;   // (a mod's option: it looks at the pointer)
+    if (c.d->kind == OK_BUTTON || extra) mouseEvent(c.cx, c.cy, 0);
     g_lastFx = c.cx; g_lastFy = c.cy;
 }
 static bool isBackButton(DisplayObject* d) {   // the sheets' "Back" buttons answer to Escape (key code 19)
@@ -340,9 +392,17 @@ static DisplayObject* startButton() {   // the title menu's "Start": the first b
     }
     return nullptr;
 }
+static MovieClip* charRing();
 // the option selected when a screen opens (or the selected one goes away)
 static const Cand* defaultFocus(const std::vector<Cand>& cs) {
     const Cand* pick = nullptr;
+    if (MovieClip* ring = charRing()) {   // "Who am I?": Select (the note at the bottom right, outside the ring)
+        for (auto& c : cs) {
+            bool inRing = false; for (DisplayObject* q = c.d; q; q = q->parent) if (q == ring) { inRing = true; break; }
+            if (!inRing && (!pick || c.cx + c.cy > pick->cx + pick->cy)) pick = &c;
+        }
+        if (pick) return pick;
+    }
     {   // a Yes / No dialog: "No" (the full-screen button; on the pause screen itself that one is Back: not this rule)
         MovieClip* sheet = optionsSheet();
         bool pauseScreen = g_inGame && (!sheet || sheet->cur == 2);
@@ -417,6 +477,28 @@ static void click(const Cand& c) {
     mouseEvent(x, y, 0); mouseEvent(x, y, 1); mouseEvent(x, y, 2);
 }
 
+// Escape on the pause screen itself (not one of its sheets): resume, as P does. The pause sheet's "Exit to main
+// menu" also answers to Escape, so it used to ask whether to quit the run instead. Logic thread (key events).
+bool recompInGameplay(bool* inGame);
+bool menuEscapeResumes() {
+    bool inGame = false, play = recompInGameplay(&inGame);
+    if (!inGame || play) return false;
+    MovieClip* sheet = optionsSheet();
+    if (sheet && sheet->cur != 2) return false;
+    pulse(80, 0);
+    return true;
+}
+// the ring of characters, when the menu shows the character select page (_root.men.men.pos 3): _root.men.men.cha
+// (Wrath of the Lamb, Eternal), or in the original the clip with i0 and inc
+static MovieClip* charRing() {
+    Value sheet = getMemK(getMemK(Value((Object*)vm.root), intern("men")), intern("men"));
+    if (!sheet.isObj() || sheet.o->kind != OK_CLIP || toNum(getMemK(sheet, intern("pos"))) != 3) return nullptr;
+    Value cha = getMemK(sheet, intern("cha"));
+    if (cha.isObj() && cha.o->kind == OK_CLIP) return ((MovieClip*)cha.o)->visible ? (MovieClip*)cha.o : nullptr;
+    for (DisplayObject* k : ((MovieClip*)sheet.o)->kids)
+        if (k->kind == OK_CLIP && ((MovieClip*)k)->childByName(intern("i0")) && ((MovieClip*)k)->childByName(intern("inc"))) return k->visible ? (MovieClip*)k : nullptr;
+    return nullptr;
+}
 void padNavEvent(int code) {
     if (code == NAV_OFF) { g_navOn = false; return; }
     if (g_uiOpen || g_gameplay) return;
@@ -436,6 +518,28 @@ void padNavEvent(int code) {
     if (!f) f = ensureFocus(cs);
     if (code == NAV_CONFIRM) { if (!fresh || cs.size() == 1) click(*f); return; }
     if (code == NAV_BACK) { goBack(cs); return; }
+    // the character select screen ("Who am I?"): left / right turn the ring of characters (the game's own arrow
+    // keys); up / down go through its other options from top to bottom (Back, Hard mode, Select, Random)
+    if (MovieClip* ring = charRing()) {
+        if (code == NAV_LEFT || code == NAV_RIGHT) { pulse(code == NAV_LEFT ? 37 : 39, 0); return; }
+        if (code == NAV_UP || code == NAV_DOWN) {
+            if (fresh) return;   // (the first press only shows Select, where the selection starts)
+            // (the ring's own buttons: its two arrows, and Random below them - the lowest one)
+            std::vector<const Cand*> opts; const Cand* random = nullptr;
+            for (auto& c : cs) {
+                bool inRing = false; for (DisplayObject* q = c.d; q; q = q->parent) if (q == ring) { inRing = true; break; }
+                if (!inRing) opts.push_back(&c);
+                else if (!random || c.cy > random->cy) random = &c;
+            }
+            if (random) opts.push_back(random);
+            std::sort(opts.begin(), opts.end(), [](const Cand* a, const Cand* b) { return a->cy < b->cy; });
+            if (opts.empty()) return;
+            int at = -1; for (size_t i = 0; i < opts.size(); i++) if (opts[i]->d == f->d) at = (int)i;
+            int to = at < 0 ? 0 : std::max(0, std::min((int)opts.size() - 1, at + (code == NAV_DOWN ? 1 : -1)));
+            g_focus = opts[to]->d; hover(*opts[to]);
+            return;
+        }
+    }
     if (fresh) return;   // the first press only shows where the outline is
     static const double dirs[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
     double dx = dirs[code][0], dy = dirs[code][1];
@@ -484,12 +588,26 @@ void menuUiTick(bool gameplay, bool inGame) {
     else if (g_ui && (g_ui->removed || !g_ui->parent)) { g_ui = nullptr; g_uiBuilt = -1; }   // (the game cleared _root: rebuild)
     g_focusShown = false; g_focusShow = nullptr;
     // the mouse over something clickable: the hand cursor (main.cpp)
+#ifdef __PSP__
+    g_hand = false;   // (no mouse)
+#else
     g_hand = !gameplay && !g_uiOpen && (topButtonAt(g_player.mouseX, g_player.mouseY) || labelHit(g_player.mouseX, g_player.mouseY));
+#endif
     if (gameplay && !g_uiOpen) { removeLabel(); return; }
     updateRebindLabel();
     if (!g_navOn || g_uiOpen) return;
+#ifdef __PSP__
+    // (PSP: finding the options takes several ms with emulated doubles: every 4th tick; meanwhile the last result.
+    // The objects it refers to are kept alive until then)
+    static std::vector<Cand> s_cs; static uint32_t s_csTick = 0; static bool s_moving = false, s_traced = false;
+    if (!s_traced) { s_traced = true; g_rootTracers.push_back([](Tracer& tr) { for (auto& c : s_cs) { tr.mark(c.d); tr.mark(c.show); } }); }
+    if (s_cs.empty() || g_player.tick - s_csTick >= 4 || g_player.tick < s_csTick) { s_cs = candidates(); s_csTick = g_player.tick; s_moving = screenMoving(s_cs); }
+    const std::vector<Cand>& cs = s_cs;
+    bool moving = s_moving;
+#else
     std::vector<Cand> cs = candidates();
     bool moving = screenMoving(cs);
+#endif
     // a press that sets the screen moving (the camera travelling to Stats and back, a sheet closing): nothing is
     // shown until it settles, instead of the old selection sliding away with it
     if (g_afterClick) {

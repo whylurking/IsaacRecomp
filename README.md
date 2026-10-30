@@ -114,6 +114,7 @@ at startup. Each version keeps its own save file.
 - **Built-in performance overlay** (F3).
 - **Original, Wrath of the Lamb and Eternal Edition** in a single program.
 - **Save converter** to bring your progress from the Flash version (and back).
+- **Mods**, turned on and off with a mod manager: **StatOn** shows your stats and the devil / angel room chances on screen as in *Repentance*, **GenesisConsole** is a Rebirth-style debug console, **WideSaac** fills wide screens (with *Hyper Zoom*, the room fills the screen, and *Minimap+*), **PillLog** shows the effect of the pills you already know, **Itemnomicon** tells you what an item, trinket or card does before you pick it up, **BaseTime** adds speedrun timers, **The Gone** is a new character in the spirit of *The Lost*, and **RainbowVision** recolours the game for colour-blind players.
 
 ## 📦 Installation (PC)
 
@@ -156,6 +157,34 @@ Every package includes **`tools/save_converter.html`**: open it in any web brows
 It turns the Flash game's `so.sol` into the IsaacRecomp save file and back, for the original game, Wrath of the Lamb
 and Eternal Edition. Stats, items, secrets, bosses and unlock order carry over. Close the game and back up your save
 before replacing it. The converter was originally made by [g333nza](https://github.com/g333nza).
+
+## 🧩 Mods
+
+Mods are small optional changes, kept as `.mod` files in the **`mods`** folder next to the program (Android:
+`IsaacRecomp/mods/`; Switch: `sd:/switch/isaac/mods/`; the program puts the mods that come with it there the first
+time it sees them, and one you delete stays deleted). They are all **off** until you turn them on.
+
+Which mods are on, and their options, are in one text file: **`mods/mods.txt`** (the game writes it the first time it
+starts). Change it with any text editor - one `[id]` section per mod, `on = 1` or `on = 0`, and its options, each
+explained on the line above - or open **`tools/mod_manager.html`** in any web browser (offline, nothing to install, no
+folder to choose): flip the switches, change the options, **save `mods.txt`** and put it in the `mods` folder in place
+of the old one (open your current one there first to start from it).
+Mods are read when the game starts, and `log.txt` lists which ones are on.
+
+| Mod | What it does |
+|-----|--------------|
+| **StatOn** (`staton`) | Your stats on the left of the screen during a run, each with its symbol, as in *Repentance*: speed, tears, damage, range, shot speed and luck (luck only in Wrath of the Lamb and Eternal Edition), and the chances that this floor's boss room opens the devil room and the angel room, with the game's own formula. When one changes, the difference shows next to it for a moment, green up and red down. Options: `show_changes` (`0` hides the differences), `show_deals` (`0` hides the devil / angel chances), `opacity` (10-100), `size` (1-5, 3 normal), `margin` (1-5: distance from the left edge). It only reads the game: runs play exactly the same with it on. |
+| **GenesisConsole** (`genesis`) | A console to type commands during a run, like Rebirth's: give items, spawn enemies, bosses, pickups, trinkets and cards, change your stats, hearts and pickups, god mode, open every door, teleport to any room or floor. Open it with the key above Tab, the controller's Back / Minus button, or a three-finger tap; the game pauses while it's open. Everything it does is explained in **`tools/genesis_wiki.html`**. **While it's on, nothing is saved** (no achievements, unlocks, statistics or collection; the save itself isn't touched). Its `unlock` command unlocks everything for that session only (not saved). |
+| **WideSaac** (`widesaac`) | The whole screen on wide screens (16:9, 16:10, 21:9...) and any other shape: black bars by default, or with `fill = 1` the game's own background fills the sides and the menus fill the whole screen (more of their own sheet, nothing stretched); screen-wide shading (pause, fades) covers the whole screen too. **Hyper Zoom** (`hyper_zoom`, a tick box in the mod manager): while you play, the room itself fills the screen; the HUD band and the map go, and your hearts (top right), active item with its charges, coins / bombs / keys and pill / card are drawn on the room's right side. It stays like that the whole run, paused and on the death screen too; a boss's "VS" intro, the cutscenes between floors and the endings are shown in the room's space with black sides, so the zoom never changes. With Hyper Zoom, **M** (L3 on a controller, a four-finger tap) shows or hides **Minimap+**: the floor's map, larger and see-through, in the middle of the room (`minimap = 0`: no map at all). It only changes what is drawn. |
+| **PillLog** (`pilllog`) | Pills you already took this run are known by sight: their effect is written over every pill of that colour in the room or for sale (green good, red bad), the pickup banner says the effect instead of "Pills here!", and the pause screen lists the six pill colours of the run with what each one does ("???" until taken). The names are the game's own, as its HUD shows them. Options: `labels`, `banner`, `pause_list` (1/0). |
+| **Itemnomicon** (`itemnomicon`) | Walk up to an item, a trinket or a card you can pick up or buy, and a card over it tells you what it is: its name (in the colour of its quality, as Rebirth rates the same items: grey 0, white 1, blue 2, violet 3, gold 4), passive or active item and its quality, the stats it changes (green up, red down) and what it does. The stat changes are the game's own, measured in each version (for Isaac with nothing else). Options: `range` (0.5-4 tiles, 1 by default), `opacity` (30-100). |
+| **BaseTime** (`basetime`) | Speedrun timers, left of the map (with Hyper Zoom, at the room's bottom left): the game time (mm:ss, while you can move: it stops while paused, in cutscenes and while loading) and below it the total time (mm:ss:mmm, everything since the run started). The main menu shows, on a note of its own, your best game time - the fastest run to your furthest ending (Mom, then Mom's Heart, then Isaac or Satan, then The Chest) - and below it your last run's total time, with "win" or "died". |
+| **The Gone** (`thegone`) | A new character in the spirit of Rebirth's *The Lost*, one more place on the character select screen, with his own card like the others' (name, stats, item): a pale Isaac (3.5 damage) who starts with Spirit of the Night (in the original game, which doesn't have it, Transcendence and the Ouija Board) and has no hearts at all: no hearts, heart containers or extra lives, and the first hit kills him. In a devil room he can take one deal for free; then the other deals disappear. He has to be unlocked first (three floors in a row without a hit or a heart), and he unlocks four new things of his own: the card **Negative Isaac** (Mom's Heart: a 15-second shield), **Nothing** (Mom's Heart with no item but his own: some enemies just aren't there), **The Void Shard** (Isaac: enemy shots may go through you) and **Black Mirror** (Satan: the room in negative, the enemies fight each other), each with its own "You unlocked" card. Kept in `saves/thegone_<game>.txt`. |
+| **RainbowVision** (`rainbowvision`) | Colours for colour-blind players: the whole picture is recoloured (daltonization) so colours you can't tell apart look different. `type`: deuteranopia (green-blind, the most common), protanopia (red-blind) or tritanopia (blue-blind); `strength` (0-100). Only the colours on screen change. |
+
+A `.mod` file is plain text: `id`, `name`, `version`, `author`, `description` and the mod's own options as
+`key = value` lines. The code behind each mod is built into the program (`rt/mods.*`, `rt/mod_staton.cpp`, `rt/mod_genesis.cpp`, `rt/mod_widesaac.cpp`, `rt/mod_pilllog.cpp`, `rt/mod_itemnomicon.cpp`, `rt/mod_basetime.cpp`, `rt/mod_thegone.cpp`), so for
+now new mods come with new versions of IsaacRecomp.
 
 ## 🎮 PC controls
 
@@ -229,7 +258,7 @@ through Android's low-latency audio path. To choose the resolution yourself, set
 
 ## 🎮 Nintendo Switch (homebrew)
 
-The same native recomp, built as a homebrew application (`.nro`, version 1.4.0). It contains no code or assets from
+The same native recomp, built as a homebrew application (`.nro`, version 1.5.0). It contains no code or assets from
 Nintendo or from the game: you provide the game's `Isaac.exe` yourself, exactly as on PC.
 
 **You need:**
@@ -296,6 +325,7 @@ and taps in menus. The pause button is only shown in handheld mode.
 | `joystick_acceleration` | `1`      | Analog movement: speed follows how far the stick is pushed (full speed at ¾ of its travel). `0` = always full speed |
 | `touch_controls`        | `1`      | Android / Switch: `0` turns off the touch joysticks, HUD taps and pause button |
 | `render_height`         | `0`      | Android: rendering resolution (`0` = automatic; `1080`, `720`, `600`, `540`, `480`) |
+| `mods`                  | (empty)  | The [mods](#-mods) that are on, by id, separated by commas: only until `mods/mods.txt` exists |
 | `bind_keyboard`, `bind_controller`, `controller_move_stick`, `touch_move_side`, `touch_joystick_size`, `touch_joystick_type` | (empty) | Written by the rebinding screen; empty = original controls |
 
 **Save files:**

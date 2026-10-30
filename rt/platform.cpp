@@ -10,6 +10,7 @@
 #include <windows.h>
 #else
 #include <sys/stat.h>
+#include <dirent.h>
 #endif
 #include <cerrno>
 #include <cstring>
@@ -44,10 +45,16 @@ void platformInitLimits() {
     g_lim = kBig;
     g_lim.defaultCacheMB = 512;
     g_lim.pboBytes = 32u << 20;
+#elif defined(__PSP__)
+    // PSP (2000 and later): ~50 MB for everything. No GPU-side layers, a few atlas pages (see render_psp.cpp)
+    g_lim = {15000, 4u << 20, 1u << 20, 2u << 20, 0, 0, 0, 6, 2.0, true, 1.4};   // (objects ~200 bytes: collect early)
 #elif defined(FL_SWITCH_MEMORY)
     g_lim = kSmall;
 #else
     g_lim = kBig;
+#endif
+#if defined(FL_LEAN) && !defined(__PSP__)
+    if (getenv("ISAAC_PSPLIMITS")) g_lim = {15000, 4u << 20, 1u << 20, 1u << 20, 0, 0, 0, 6, 2.0, true, 1.4};   // (tests: the PSP's)
 #endif
 }
 
@@ -90,7 +97,9 @@ const CpuSets& cpuSets() {
 // This way the renderer never waits for the logic to release a core (Horizon does not time-slice between
 // threads of the same priority: one does not progress until the other blocks).
 int platformPoolWorkers(ThreadRole role) {
-#if defined(__SWITCH__)
+#if defined(__PSP__)
+    (void)role; return 0;   // one core: everything on the calling thread
+#elif defined(__SWITCH__)
     return role == ROLE_LOGIC ? 2 : 1;
 #elif defined(__ANDROID__)
     (void)role;
@@ -109,7 +118,9 @@ void platformPoolWorkerPlace(ThreadRole role, int i, int* core, int* prio) {
     else { *core = 2; *prio = 0x2D; }
 }
 int platformRasterServiceWorkers() {
-#if defined(__SWITCH__)
+#if defined(__PSP__)
+    return 0;
+#elif defined(__SWITCH__)
     return 2;
 #elif defined(__ANDROID__)
     const CpuSets& c = cpuSets();
@@ -258,16 +269,47 @@ static std::wstring wpath(const std::string& u) {
     return w;
 }
 FILE* platformFopen(const std::string& path, const char* mode) { return _wfopen(wpath(path).c_str(), wpath(mode).c_str()); }
+bool platformRemove(const std::string& path) { return _wremove(wpath(path).c_str()) == 0; }
 bool platformMkdir(const std::string& path) { return CreateDirectoryW(wpath(path).c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS; }
+bool platformListDir(const std::string& dir, std::vector<std::string>& names) {
+    WIN32_FIND_DATAW fd;
+    std::wstring w = wpath(dir); if (!w.empty() && w.back() != L'\\' && w.back() != L'/') w += L'\\';
+    HANDLE h = FindFirstFileW((w + L"*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;   // (exists but empty)
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        int n = WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, nullptr, 0, nullptr, nullptr);
+        std::string u(n > 0 ? n : 1, '\0');
+        if (n > 0) WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, &u[0], n, nullptr, nullptr);
+        u.resize(strlen(u.c_str()));
+        names.push_back(u);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return true;
+}
 bool platformReplaceFile(const std::string& from, const std::string& to) {
     return MoveFileExW(wpath(from).c_str(), wpath(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
 #else
 FILE* platformFopen(const std::string& path, const char* mode) { return fopen(path.c_str(), mode); }
+bool platformRemove(const std::string& path) { return remove(path.c_str()) == 0; }
+bool platformListDir(const std::string& dir, std::vector<std::string>& names) {
+    DIR* d = opendir(dir.c_str()); if (!d) return false;
+    while (dirent* e = readdir(d)) {
+        std::string n = e->d_name;
+        if (n == "." || n == "..") continue;
+#if defined(DT_DIR)
+        if (e->d_type == DT_DIR) continue;
+#endif
+        names.push_back(n);
+    }
+    closedir(d);
+    return true;
+}
 bool platformMkdir(const std::string& path) { return mkdir(path.c_str(), 0777) == 0 || errno == EEXIST; }
 bool platformReplaceFile(const std::string& from, const std::string& to) {
-#ifdef __SWITCH__
-    remove(to.c_str());   // (the SD card's FAT driver doesn't replace on rename)
+#if defined(__SWITCH__) || defined(__PSP__)
+    remove(to.c_str());   // (the SD card's / Memory Stick's FAT driver doesn't replace on rename)
 #endif
     return rename(from.c_str(), to.c_str()) == 0;
 }
