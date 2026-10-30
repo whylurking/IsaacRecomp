@@ -63,6 +63,7 @@ FILE* platformFopen(const std::string& path, const char* mode);
 bool platformMkdir(const std::string& path);
 bool platformReplaceFile(const std::string& from, const std::string& to);
 bool platformFileExists(const std::string& path);
+bool platformRemove(const std::string& path);
 bool platformCopyFile(const std::string& from, const std::string& to);
 // the files (not folders) in a folder; false if it doesn't exist
 bool platformListDir(const std::string& dir, std::vector<std::string>& names);

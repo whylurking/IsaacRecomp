@@ -1671,7 +1671,7 @@ static void updateView() {
     double k = 1 - std::exp(-std::min(dt, 0.25) * 14), err = 0;
     for (int i = 0; i < 4; i++) { g_viewCur[i] += (tgt[i] - g_viewCur[i]) * k; err = std::max(err, std::fabs(tgt[i] - g_viewCur[i])); }
     if (err < 0.5) for (int i = 0; i < 4; i++) g_viewCur[i] = tgt[i];
-    g_viewClip = clip && err < 0.5;   // (while easing, nothing is cut)
+    g_viewClip = clip;   // (also while easing: the frame around the view stays black, it never flashes in)
 }
 Mat stageToWindowFor(int winW, int winH) {
     double x0 = g_viewCur[0], y0 = g_viewCur[1], w = g_viewCur[2] - g_viewCur[0], h = g_viewCur[3] - g_viewCur[1];

@@ -35,6 +35,8 @@
 namespace fl {
 bool recompInGameplay(bool* inGame);
 extern bool g_saveLocked;
+void sharedObjectFlushAll();
+void goneUnlockAll();
 std::string g_modsSaveDir;
 
 namespace {
@@ -123,6 +125,7 @@ std::vector<Named> cardNames() {
     std::vector<Named> v;
     for (int i = 0; i < 22; i++) v.push_back({7 + i, kTarot[i]});
     if (game() != "og") for (int i = 0; i < 5; i++) v.push_back({70 + i, kPlaying[i]});
+    if (modActive("thegone")) v.push_back({120, "Negative Isaac"});   // (The Gone's card)
     return v;
 }
 // pickups: create() type 5.0F + col * 1e-9 (F: the pickup's frame)
@@ -650,11 +653,30 @@ void cmdDebugEnemies(const Args&) {   // (hidden) every enemy type known to the 
     if (!s.empty()) out(s);
 }
 
+void cmdUnlock(const Args&) {
+    // Every unlock (characters, items, chests...) on for this session only: the save lock (g_saveLocked) still keeps
+    // it out of the save. The game reads _root.locker / ulocker (the same arrays as so.data.lock / ulock).
+    Value so = V(root(), "so"), data = V(so, "data");
+    Value lk = V(root(), "locker"), ul = V(root(), "ulocker");
+    if (!lk.isObj() || !ul.isObj() || !data.isObj()) { err("The save isn't loaded yet"); return; }
+    uint8_t g = lk.o->guarded; lk.o->guarded = 0;
+    int n = 0;
+    for (int i = 1; i < 100; i++) {
+        if (!truthy(getMem(lk, Value((double)i)))) n++;
+        setMem(lk, Value((double)i), VTRUE);
+        setMem(ul, Value((double)i), VTRUE);
+    }
+    lk.o->guarded = g;
+    goneUnlockAll();   // (The Gone and what he unlocks, for this session too)
+    ok(n ? fmt("Everything unlocked (%d new) until you close the game: not saved. Back to the main menu to see it.", n) : "Everything is already unlocked");
+}
+
 const Cmd kCmds[] = {
     {"help", "?", "[command]", "The commands, or how one works.", cmdHelp, false},
     {"give", "g", "<item>", "Gives an item, as if picked up: its number or name (give 7, give blood of the martyr, give mom's knife). Tab completes the name.", cmdGive, true},
     {"remove", "r", "<item>", "Takes an item away (one of it). One-time effects (hearts, pickups it gave) stay.", cmdRemove, true},
     {"spawn", "s", "<what> [count]", "Spawns next to you: an enemy or boss by name or type number (spawn gaper 3, spawn monstro, spawn 10.1), a pickup (heart, halfheart, soulheart, eternalheart, penny, nickel, dime, key, goldenkey, bomb, doublebomb, trollbomb, chest, lockedchest, slotmachine), or: item <item>, trinket <name>, card <name>, pill [1-6]. Up to 20 at once.", cmdSpawn, true},
+    {"unlock", "", "", "Unlocks everything (characters, items, chests...) until you close the game. Nothing is saved.", cmdUnlock, false},
     {"kill", "killall", "", "Kills every enemy in the room.", cmdKill, true},
     {"god", "", "[on|off]", "God mode: nothing hurts you. Without on/off it switches.", cmdGod, true},
     {"doors", "", "[on|off]", "Opens the room's doors now, like Dad's Key. \"doors on\" keeps opening them in every room.", cmdDoors, true},

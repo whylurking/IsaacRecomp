@@ -109,7 +109,8 @@ struct ViewReq { bool set = false, clip = true, cut = false; float r[4] = {}, c[
 extern ViewReq g_viewReq;
 // per display object, for the snapshot only (the game never sees it; WideSaac's Hyper Zoom): hidden, and / or drawn
 // with another local matrix. Rebuilt by the logic thread every tick before buildSnapshot.
-struct SnapOv { bool hide = false, hasM = false, hasCx = false; Mat m; float alpha = -1; CX cx; };   // alpha >= 0: multiplies the node's alpha; hasCx: cx applied over the node's own color transform
+struct SnapOv { bool hide = false, hasM = false, hasCx = false; Mat m; float alpha = -1; CX cx;
+                bool hideKids = false; DisplayObject* extra = nullptr; };   // hideKids: its own children aren't drawn; extra: drawn as its (last) child   // alpha >= 0: multiplies the node's alpha; hasCx: cx applied over the node's own color transform
 extern std::unordered_map<DisplayObject*, SnapOv> g_snapOv;
 extern std::atomic<float> g_windowAspect;   // the window's width / height (main thread), 0 if unknown
 void bitmapGone(BitmapData* b);   // a BitmapData was destroyed or released (dispose)

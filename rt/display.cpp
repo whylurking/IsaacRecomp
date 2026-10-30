@@ -297,6 +297,7 @@ void doEnumChildren(DisplayObject* d, std::vector<Str*>& keys) {
 }
 
 // ============================================================ Object creation
+Object* g_overFrames = nullptr;
 MovieClip* newClip(SpriteDef* def) {
     spriteEnsure(def);
     MovieClip* c = gcNew<MovieClip>();
@@ -465,6 +466,14 @@ MovieClip* createEmptyMovieClip(MovieClip* parent, Str* name, int depth) {
     return c;
 }
 
+MovieClip* newDetachedClip() {
+    static SpriteDef* empty = nullptr;
+    if (!empty) { empty = new SpriteDef(); empty->type = CH_SPRITE; empty->id = 0xffff; empty->nframes = 1; empty->frames.resize(1); }
+    MovieClip* c = newClip(empty);
+    c->placedByScript = true; c->initialized = true; c->cur = 1;
+    return c;
+}
+
 // ============================================================ Timeline sounds
 static void startTimelineSound(MovieClip* c, const FrameCmd& fc) {
     CharDef* cd = g_movie.get(fc.soundId);
@@ -619,6 +628,11 @@ void gotoFrame(MovieClip* c, int frame, bool stop) {
     if (const char* gt = getenv("ISAAC_GOTOTRACE")) {   // (testing) who sends a clip to a frame
         std::string p = targetPath(c)->s;
         if (p.find(gt) != std::string::npos) logf("[goto] t=%u %s -> %d (from %d)\n", g_player.tick, p.c_str(), frame, c->cur);
+    }
+    c->reqFrame = frame;
+    if (frame >= 100 && c->def && frame > (int)c->def->nframes && g_overFrames && g_overFrames->kind == OK_ARRAY) {
+        auto& el = ((Array*)g_overFrames)->el;
+        if (el.size() < 4096) { bool have = false; for (const Value& v : el) if (v.isObj() && v.o == (Object*)c) { have = true; break; } if (!have) el.push_back(Value((Object*)c)); }
     }
     if (frame < 1) frame = 1;
     if (stop) { c->playing = false; stopStream(c); } else c->playing = true;

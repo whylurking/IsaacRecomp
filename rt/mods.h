@@ -9,10 +9,11 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fl {
-struct CharDef; struct DisplayObject; struct MovieClip;
+struct CharDef; struct DisplayObject; struct MovieClip; struct RectF;
 
 struct ModInfo {
     std::string file, id, name, version, author, description, engine;
@@ -75,4 +76,6 @@ uint16_t synthRect(float w, float h, uint32_t argb);
 uint16_t synthTextField(float w, float size, uint32_t argb, int align);
 uint16_t synthHandText(const std::string& text, float H, uint32_t argb, float* outW = nullptr);   // marker-style text, like the menus'   // align 0 left, 1 right, 2 center
 DisplayObject* synthPut(MovieClip* parent, uint16_t id, int depth, double x, double y, const char* name = nullptr);
+// (menuui.cpp) options a mod adds to the controller's choices on a menu screen: an object and its stage rectangle
+void menuSetExtras(const std::vector<std::pair<DisplayObject*, RectF>>& v);
 }

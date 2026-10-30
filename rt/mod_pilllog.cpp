@@ -14,7 +14,9 @@
 #include "mod_ui.h"
 #include "core.h"
 #include "display.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 
@@ -131,7 +133,11 @@ void pilllogTick(const ModInfo& m) {
         if (!g_labels || !g_list) { removeAll(); return; }
     }
     // the banner of a pill just picked up
-    if (m.opt("banner", "1") != "0") {
+    {   // opacity (30-100 %) of the labels and the pause list
+        double op = atof(m.opt("opacity", "100").c_str());
+        g_clip->cx.am = (float)std::max(0.3, std::min(1.0, op / 100.0));
+    }
+    if (m.opt("banner", "0") == "1") {
         Value st1 = V(hudV, "st1");
         Value tex = V(st1, "tex");
         int pilc = (int)num(V(root, "pilc"), 0);

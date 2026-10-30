@@ -63,6 +63,7 @@ int recompTouchTargets(float out[4][4]);
 void applyLoadPatches(); void recompPatchesTick(); void recompFullscreenChanged(bool full); bool recompInGameplay(bool* inGame);
 extern std::atomic<int> g_fullscreenRequest; extern std::atomic<bool> g_isFullscreen;
 void renderFinish();
+void recompMusicTick();
 void renderPaceAfterSwap();
 bool renderPaceWait(uint64_t timeoutNs);
 int renderAtlasPages();
@@ -794,7 +795,7 @@ int main(int argc, char** argv) {
     auto runScript = [&](std::function<void(double, const std::string&)> shot) {
         while (scriptPos < script.size() && script[scriptPos].tick <= g_player.tick) {
             ScriptCmd& c = script[scriptPos++];
-            if (c.op == "down") keyEvent(atoi(c.arg.c_str()), atoi(c.arg.c_str()) == 32 ? 32 : 0, true);
+            if (c.op == "down") { int k = atoi(c.arg.c_str()); if (!(k == 27 && menuEscapeResumes())) keyEvent(k, k == 32 ? 32 : 0, true); }
             else if (c.op == "up") keyEvent(atoi(c.arg.c_str()), 0, false);
             else if (c.op == "shot") shot(1.0, c.arg);
             else if (c.op == "shotf") { std::istringstream ss(c.arg); double fr = 0; std::string file; ss >> fr >> file; shot(fr, file); }
@@ -1005,7 +1006,7 @@ int main(int argc, char** argv) {
                 static const bool inputLog = getenv("ISAAC_INPUT_LOG") != nullptr;   // (testing)
                 for (auto& ev : evs) {
                     if (inputLog) logf("[input] tick %u type %d code %d down %d at %.0f,%.0f\n", g_player.tick, ev.type, ev.code, ev.down, ev.x, ev.y);
-                    if (ev.type == 0) keyEvent(ev.code, ev.ascii, ev.down);
+                    if (ev.type == 0) { if (!(ev.code == 27 && ev.down && menuEscapeResumes())) keyEvent(ev.code, ev.ascii, ev.down); }
                     else if (ev.type == 1) {
                         if (ev.code == 1) tapOnButtons = touchButtonAt(ev.x, ev.y) || touchAnyButton();   // (see type 4)
                         menuMouse(ev.x, ev.y, ev.code); mouseEvent(ev.x, ev.y, ev.code);
@@ -1028,11 +1029,15 @@ int main(int argc, char** argv) {
                 // with getTimer() % 100 draws; a frame clock (n * 33.3 ms) only gave 0, 33 or 66. Headless tests keep
                 // the frame clock (deterministic, like the Ruffle harness); ISAAC_FRAMECLOCK=1 forces it here too.
                 static const bool frameClock = getenv("ISAAC_FRAMECLOCK") != nullptr;
-                g_player.timeMs = frameClock ? n * 1000.0 / g_frameRate : (nowSec() - clockStart) * 1000.0;
+                // (while GenesisConsole pauses the game its clock stops too: the game measures some fades by getTimer()
+                // between ticks, and a long pause made the screen flash bright when it went on)
+                static double pausedSec = 0, lastNow = 0;
+                { double now = nowSec(); if (fl::genesisPausesGame() && lastNow > 0) pausedSec += now - lastNow; lastNow = now; }
+                g_player.timeMs = frameClock ? n * 1000.0 / g_frameRate : (nowSec() - clockStart - pausedSec) * 1000.0;
                 renderFreeRetired();   // (snapshots the renderer is done with: freed here, not on the render thread)
                 double t0 = nowSec();
                 // (GenesisConsole open: the game is paused, the console keeps running)
-                if (!fl::genesisPausesGame()) { runFrame(); runIntervals(); recompPatchesTick(); } else consoleTicks++;
+                if (!fl::genesisPausesGame()) { runFrame(); runIntervals(); recompPatchesTick(); } else { consoleTicks++; recompMusicTick(); }
                 fl::modsTick();
                 { bool ig = false, gp = recompInGameplay(&ig); menuUiTick(gp, ig); }
                 if (!cfg.gcAfterTick) gcCollect((nowSec() - t0) * 1000.0);

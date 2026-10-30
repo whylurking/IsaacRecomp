@@ -296,6 +296,12 @@ void statonTick(const ModInfo& m) {
         double op = atof(m.opt("opacity", "90").c_str());
         build((MovieClip*)hud.o, std::max(0.1, std::min(1.0, op / 100.0)));
         if (!g_clip) return;
+        // size 1-5 (1, the default: the smallest; 3: as drawn) and margin 1-5 (1: next to the edge): the column scaled from its top-left row
+        static const double kScale[5] = {0.7, 0.85, 1.0, 1.2, 1.4};
+        int sz = std::max(1, std::min(5, atoi(m.opt("size", "1").c_str())));
+        int mg = std::max(1, std::min(5, atoi(m.opt("margin", "1").c_str())));
+        double k = kScale[sz - 1], x = kX + (mg - 1) * 10;
+        g_clip->m.a = g_clip->m.d = k; g_clip->m.tx = x - k * kX; g_clip->m.ty = kY * (1 - k); g_clip->scriptXform = true;
     }
     const std::string game = g_game ? g_game->tag : "wotl";
     // damage: every 6 ticks (dmgdo runs a little of the game's script)

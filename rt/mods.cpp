@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <set>
 #include <cctype>
 #include <cstdio>
 
@@ -42,7 +43,7 @@ static bool parseMod(const std::string& path, const std::string& file, ModInfo& 
         std::string k = lower(trim(line.substr(0, eq))), v = trim(line.substr(eq + 1));
         if (k == "id") m.id = lower(v); else if (k == "name") m.name = v; else if (k == "version") m.version = v;
         else if (k == "author") m.author = v; else if (k == "description") m.description = v; else if (k == "engine") m.engine = lower(v);
-        else if (k == "warning" || k == "help") {}   // (for the mod manager)
+        else if (k == "warning" || k == "help" || k == "category" || k == "summary") {}   // (for the mod manager)
         else { if (!m.options.count(k)) m.optKeys.push_back(k); m.options[k] = v; m.optNotes[k] = note; }
         note.clear();
     }
@@ -106,7 +107,7 @@ static void upgradeBuiltin(const std::string& path, const char* builtin) {
             size_t eq = line.find('=');
             if (eq != std::string::npos) {
                 std::string k = lower(trim(line.substr(0, eq)));
-                static const char* kMeta[] = {"id", "name", "version", "author", "description", "engine", "warning", "help"};
+                static const char* kMeta[] = {"id", "name", "version", "author", "description", "engine", "warning", "help", "category", "summary"};
                 bool meta = false; for (auto* m : kMeta) meta |= k == m;
                 auto it = mine.find(k);
                 if (!meta && it != mine.end() && it->second.note == note) raw = trim(line.substr(0, eq)) + " = " + it->second.value;
@@ -123,55 +124,61 @@ static const struct { const char* file; const char* text; } kBuiltin[] = {
 
 void modsInit(const std::string& dir, const std::string& enabledList) {
     g_mods.clear();
-    // the mods that come with the program are put in the "mods" folder (created if needed) the first time this
-    // version sees them: on Android it's the only way to get them, and a later version's new mods appear by
-    // themselves. mods/installed.txt lists the ones already put there, so a mod deleted from the folder stays deleted.
     std::vector<std::string> names;
     if (!platformListDir(dir, names)) { if (platformMkdir(dir.substr(0, dir.size() - 1))) logf("mods: created %s\n", dir.c_str()); }
-    {
-        std::vector<std::string> done;
-        if (FILE* f = platformFopen(dir + "installed.txt", "rb")) {
-            char buf[256];
-            while (fgets(buf, sizeof buf, f)) { std::string l = trim(buf); if (!l.empty() && l[0] != ';') done.push_back(lower(l)); }
-            fclose(f);
-        }
-        bool changed = false;
-        for (auto* b = kBuiltin; b->file; b++) {
-            bool there = false; std::string realName; for (auto& n : names) if (lower(n) == lower(b->file)) { there = true; realName = n; }
-            if (there) upgradeBuiltin(dir + realName, b->text);   // (a newer version of it comes with the program)
-            if (std::find(done.begin(), done.end(), lower(b->file)) != done.end()) continue;
-            if (!there) {
-                if (FILE* f = platformFopen(dir + b->file, "wb")) { fputs(b->text, f); fclose(f); names.push_back(b->file); logf("mods: added %s\n", b->file); }
-                else continue;
-            }
-            done.push_back(lower(b->file)); changed = true;
-        }
-        if (changed) if (FILE* f = platformFopen(dir + "installed.txt", "wb")) {
-            fputs("; The mods that came with IsaacRecomp and were already put in this folder (one that is deleted is not put back)\n", f);
-            for (auto& d : done) fprintf(f, "%s\n", d.c_str());
-            fclose(f);
-        }
-    }
     // mods/mods.txt: which mods are on and their options, one [id] section each (written by the program, edited by
     // hand or made by tools/mod_manager.html). Without it (versions before 1.5's last ones): mods/enabled.txt, or
     // isaac.ini's "mods =" line, and each .mod file's own options; mods.txt is then written from them.
     struct TxtSec { bool hasOn = false, on = false; std::map<std::string, std::string> opts; };
     std::map<std::string, TxtSec> txt; bool haveTxt = false;
+    std::set<std::string> listed;   // (every section in mods.txt, also in tests)
     const bool forced = getenv("ISAAC_MODS") != nullptr;   // (tests: exactly these mods, with their .mod files' options)
-    if (FILE* f = forced ? nullptr : platformFopen(dir + "mods.txt", "rb")) {
-        haveTxt = true; char buf[2048]; std::string sec;
+    if (FILE* f = platformFopen(dir + "mods.txt", "rb")) {
+        haveTxt = !forced; char buf[2048]; std::string sec;
         while (fgets(buf, sizeof buf, f)) {
             std::string l = trim(buf);
             if (l.size() >= 3 && (unsigned char)l[0] == 0xEF && (unsigned char)l[1] == 0xBB && (unsigned char)l[2] == 0xBF) l = trim(l.substr(3));
             if (l.empty() || l[0] == ';' || l[0] == '#') continue;
-            if (l[0] == '[') { size_t e = l.find(']'); sec = lower(trim(l.substr(1, e == std::string::npos ? std::string::npos : e - 1))); txt[sec]; continue; }
-            size_t eq = l.find('='); if (eq == std::string::npos || sec.empty()) continue;
+            if (l[0] == '[') { size_t e = l.find(']'); sec = lower(trim(l.substr(1, e == std::string::npos ? std::string::npos : e - 1))); listed.insert(sec); if (!forced) txt[sec]; continue; }
+            size_t eq = l.find('='); if (eq == std::string::npos || sec.empty() || forced) continue;
             std::string k = lower(trim(l.substr(0, eq))), v = trim(l.substr(eq + 1));
             if (k == "on") { txt[sec].hasOn = true; txt[sec].on = v == "1" || lower(v) == "yes" || lower(v) == "true" || lower(v) == "on"; }
             else txt[sec].opts[k] = v;
         }
         fclose(f);
-        logf("mods: the mods that are on and their options come from mods/mods.txt\n");
+        if (haveTxt) logf("mods: the mods that are on and their options come from mods/mods.txt\n");
+    }
+    // the mods that come with the program are put in the "mods" folder (created if needed) the first time this
+    // version sees them: on Android it's the only way to get them, and a later version's new mods appear by
+    // themselves. One that has a section in mods.txt but no file was deleted by the player: it stays deleted.
+    // (Before 1.5.0 that list was mods/installed.txt: read once, moved into mods.txt and removed.)
+    bool migrate = false;
+    {
+        std::vector<std::string> legacy;
+        if (FILE* f = platformFopen(dir + "installed.txt", "rb")) {
+            char buf[256];
+            while (fgets(buf, sizeof buf, f)) { std::string l = trim(buf); if (!l.empty() && l[0] != ';') legacy.push_back(lower(l)); }
+            fclose(f); migrate = !forced;
+        }
+        for (auto* b = kBuiltin; b->file; b++) {
+            std::string id; {   // (its "id = ..." line)
+                std::string t = b->text; size_t p = 0;
+                while (p < t.size()) {
+                    size_t e = t.find('\n', p); if (e == std::string::npos) e = t.size();
+                    std::string l = trim(t.substr(p, e - p)); p = e + 1;
+                    size_t eq = l.find('=');
+                    if (eq != std::string::npos && l[0] != ';' && lower(trim(l.substr(0, eq))) == "id") { id = lower(trim(l.substr(eq + 1))); break; }
+                }
+            }
+            bool there = false; std::string realName; for (auto& n : names) if (lower(n) == lower(b->file)) { there = true; realName = n; }
+            if (there) { upgradeBuiltin(dir + realName, b->text); continue; }   // (a newer version of it comes with the program)
+            if (listed.count(id)) continue;                                      // deleted by the player
+            if (std::find(legacy.begin(), legacy.end(), lower(b->file)) != legacy.end()) {   // deleted, said installed.txt
+                if (!forced) { txt[id]; listed.insert(id); }
+                continue;
+            }
+            if (FILE* f = platformFopen(dir + b->file, "wb")) { fputs(b->text, f); fclose(f); names.push_back(b->file); logf("mods: added %s\n", b->file); }
+        }
     }
     std::string list = enabledList;
     if (haveTxt) { list.clear(); for (auto& t : txt) if (t.second.on) list += t.first + ","; }
@@ -210,7 +217,7 @@ void modsInit(const std::string& dir, const std::string& enabledList) {
     }
     for (auto& m : g_mods) if (m.enabled && m.engine == "genesis") genesisInit(m);
     // (re)write mods.txt when it doesn't exist yet or a mod isn't in it (a new one: listed, off), keeping what it said
-    bool write = !haveTxt && !forced;
+    bool write = (!haveTxt || migrate) && !forced;
     for (auto& m : g_mods) if (!forced && !txt.count(m.id)) write = true;
     if (write) {
         std::string out =
@@ -238,7 +245,10 @@ void modsInit(const std::string& dir, const std::string& enabledList) {
             if (t.second.hasOn) out += std::string("on = ") + (t.second.on ? "1" : "0") + "\n";
             for (auto& o : t.second.opts) out += o.first + " = " + o.second + "\n";
         }
-        if (FILE* f = platformFopen(dir + "mods.txt", "wb")) { fputs(out.c_str(), f); fclose(f); logf("mods: wrote mods/mods.txt\n"); }
+        if (FILE* f = platformFopen(dir + "mods.txt", "wb")) {
+            fputs(out.c_str(), f);
+            if (fclose(f) == 0) { logf("mods: wrote mods/mods.txt\n"); if (migrate && platformRemove(dir + "installed.txt")) logf("mods: installed.txt is no longer used: removed\n"); }
+        }
     }
     for (auto& w : want) {
         bool there = false; for (auto& m : g_mods) there |= m.id == w;
@@ -271,9 +281,25 @@ static void hookNewstart() {
 }
 uint32_t modsRunSerial() { return s_runSerial; }
 
+// (not a mod: always on) A tear is made at the room's origin and only placed on the next tick, so for one image it
+// sits at the top-left corner. Normally it's hidden there by the wall, but a big one (high damage) shows its shadow
+// over the room. A room clip at exactly (0, 0) with a "d" holding an "sh" (shadow) is hidden for that image only.
+static void hideUnplacedTears() {
+    static Str* kA = intern("a"); static Str* kD = intern("d"); static Str* kSh = intern("sh");
+    DisplayObject* a = vm.root ? vm.root->childByName(kA) : nullptr;
+    if (!a || a->kind != OK_CLIP) return;
+    for (DisplayObject* c : ((MovieClip*)a)->kids) {
+        if (c->kind != OK_CLIP || c->m.tx != 0 || c->m.ty != 0 || !c->name || c->name->s.size() < 2 || c->name->s[0] != 'b') continue;
+        DisplayObject* d = ((MovieClip*)c)->childByName(kD);
+        if (!d || d->kind != OK_CLIP || !((MovieClip*)d)->childByName(kSh)) continue;
+        g_snapOv[c].hide = true;
+    }
+}
+
 void modsTick() {
     { bool want = false; for (auto& m : g_mods) want |= m.enabled && (m.engine == "basetime" || m.engine == "thegone"); if (want) hookNewstart(); }
     g_snapOv.clear();   // (each mod adds its snapshot-only changes again every tick)
+    hideUnplacedTears();
     static const bool prof = getenv("ISAAC_MODPROF") != nullptr;   // (testing: time spent in each mod, at exit)
     static std::map<std::string, std::pair<double, double>> times;   // engine -> (total, max) ms
     static uint32_t ticks = 0;

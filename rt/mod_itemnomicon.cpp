@@ -1,6 +1,6 @@
 // Itemnomicon (mods/Itemnomicon.mod): walk up to an item, a trinket or a card you can pick up or buy, and a card
-// above it says what it is: its name (in the colour of the item's quality), what kind of thing it is (an active item
-// shows its charges), the stats it changes (green up, red down) and a short description of what it does.
+// above it says what it is: its name (in the colour of the item's quality), what kind of thing it is (passive or active,
+// and its quality), the stats it changes (green up, red down) and a short description of what it does.
 //
 // The stat changes were measured in the game itself (each item given alone to Isaac at the start of a run, in each of
 // the three versions; the tears from the game's own tear formula, which matches those measurements), so they are the
@@ -28,6 +28,10 @@ double num(const Value& v, double def = 0) { double d = toNum(v); return std::is
 const double kRoomTop = 77.5;
 
 enum Kind { K_NONE, K_ITEM, K_TRINKET, K_CARD };
+}  // namespace
+// (The Gone's unlocks: its items 230-232 and card 120; false for anything else)
+bool goneThingInfo(bool card, int id, std::string& name, std::string& desc, bool& active, int& quality);
+namespace {
 struct Target { Kind kind = K_NONE; int id = 0; bool shop = false; double x = 0, y = 0; };
 
 // what a pickup is (nothing if it isn't something Itemnomicon describes)
@@ -44,6 +48,9 @@ Target classify(const Value& b) {
     int nItems = game == "og" ? 132 : 198;
     t.x = num(V(b, "xp")); t.y = num(V(b, "yp"));
     if ((fr == 10 || fr == 15) && it >= 1 && it <= nItems) { t.kind = K_ITEM; t.id = it; t.shop = fr == 15; return t; }
+    { std::string n, d; bool ac; int q;   // (The Gone's items and card)
+      if ((fr == 10 || fr == 15) && goneThingInfo(false, it, n, d, ac, q)) { t.kind = K_ITEM; t.id = it; t.shop = fr == 15; return t; }
+      if ((fr == 7 || fr == 15) && goneThingInfo(true, col, n, d, ac, q)) { t.kind = K_CARD; t.id = col; t.shop = fr == 15; return t; } }
     if (fr == 7 || fr == 15) {
         t.shop = fr == 15;
         int nTr = game == "og" ? 0 : game == "eternal" ? 34 : 33;
@@ -79,15 +86,16 @@ void build(const Target& t) {
     modui::clear(g_card);
     const std::string game = g_game ? g_game->tag : "wotl";
     std::string name, tag, desc, stats; bool active = false;
-    if (t.kind == K_ITEM) {
+    int quality = t.kind == K_ITEM && t.id >= 0 && t.id < 199 ? kQuality[t.id] : 0;
+    bool gone = goneThingInfo(t.kind == K_CARD, t.id, name, desc, active, quality);
+    if (gone) tag = t.kind == K_CARD ? "CARD" : active ? "ACTIVE ITEM" : "PASSIVE ITEM";
+    else if (t.kind == K_ITEM) {
         const ItmItem& it = kItmItems[t.id];
         name = it.name; desc = it.desc;
         const char* s = game == "og" ? it.og : game == "eternal" ? it.eternal : it.wotl;
         stats = s ? s : "";
         active = it.charges >= 0;
-        if (!active) tag = "PASSIVE ITEM";
-        else if (it.charges > 0) { char b[48]; snprintf(b, sizeof b, "ACTIVE ITEM - %d CHARGE%s", it.charges, it.charges == 1 ? "" : "S"); tag = b; }
-        else tag = "ACTIVE ITEM";
+        tag = active ? "ACTIVE ITEM" : "PASSIVE ITEM";   // (the line under the name: only the kind and the quality)
     } else if (t.kind == K_TRINKET) {
         const ItmTrinket& tr = kItmTrinkets[t.id - 1];
         name = tr.name; desc = tr.desc; stats = game == "eternal" ? tr.statsEternal : tr.stats; tag = "TRINKET";
@@ -96,9 +104,8 @@ void build(const Target& t) {
         tag = t.id >= 70 ? "PLAYING CARD" : "TAROT CARD";
     }
     // the name: items in the colour of their quality, trinkets and cards in their accent colour
-    uint32_t nameColor = t.kind == K_ITEM ? qualityColor(kQuality[t.id]) : accent(t.kind, false);
-    if (t.kind == K_ITEM && t.id != 43 && t.id != 61) tag += "  -  QUALITY " + std::to_string(kQuality[t.id]);
-    if (t.shop) tag += "  -  FOR SALE";
+    uint32_t nameColor = t.kind == K_ITEM ? qualityColor(quality) : accent(t.kind, false);
+    if (t.kind == K_ITEM && t.id != 43 && t.id != 61) tag += " - QUALITY " + std::to_string(quality);
     // lines
     const float kTitle = 12.5f, kTag = 7.5f, kStat = 10, kDesc = 9;
     std::vector<Line> statLines;
@@ -161,10 +168,11 @@ void itemnomiconTick(const ModInfo& m) {
     double range = std::max(0.5, std::min(4.0, atof(m.opt("range", "1").c_str()))) * 45 + 12;
     if (play && player.isObj() && balls.isObj() && balls.o->kind == OK_ARRAY && ((DisplayObject*)hud.o)->visible) {
         double px = num(V(player, "xp")), py = num(V(player, "yp")), bd = range * range;
+        const bool trinkets = m.opt("trinkets", "1") != "0", cards = m.opt("cards", "1") != "0";
         g_playerX = px; g_playerY = py;
         for (const Value& b : ((Array*)balls.o)->el) {
             Target t = classify(b);
-            if (t.kind == K_NONE) continue;
+            if (t.kind == K_NONE || (t.kind == K_TRINKET && !trinkets) || (t.kind == K_CARD && !cards)) continue;
             double dx = t.x - px, dy = t.y - py, d2 = dx * dx + dy * dy;
             if (d2 < bd) { bd = d2; best = t; }
         }

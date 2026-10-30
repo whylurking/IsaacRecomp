@@ -269,6 +269,7 @@ static std::wstring wpath(const std::string& u) {
     return w;
 }
 FILE* platformFopen(const std::string& path, const char* mode) { return _wfopen(wpath(path).c_str(), wpath(mode).c_str()); }
+bool platformRemove(const std::string& path) { return _wremove(wpath(path).c_str()) == 0; }
 bool platformMkdir(const std::string& path) { return CreateDirectoryW(wpath(path).c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS; }
 bool platformListDir(const std::string& dir, std::vector<std::string>& names) {
     WIN32_FIND_DATAW fd;
@@ -291,6 +292,7 @@ bool platformReplaceFile(const std::string& from, const std::string& to) {
 }
 #else
 FILE* platformFopen(const std::string& path, const char* mode) { return fopen(path.c_str(), mode); }
+bool platformRemove(const std::string& path) { return remove(path.c_str()) == 0; }
 bool platformListDir(const std::string& dir, std::vector<std::string>& names) {
     DIR* d = opendir(dir.c_str()); if (!d) return false;
     while (dirent* e = readdir(d)) {

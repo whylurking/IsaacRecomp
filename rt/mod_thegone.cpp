@@ -30,8 +30,13 @@
 #include <string>
 #include <vector>
 
+#include "platform.h"
+
 namespace fl {
 bool recompInGameplay(bool* inGame);
+extern bool g_saveLocked;
+extern std::string g_modsSaveDir;
+extern void (*g_soSaveHook)(const Value& data, bool before);
 
 namespace {
 Value V(const Value& o, const char* k) { return o.isObj() ? getMemK(o, intern(k)) : VUNDEF; }
@@ -58,7 +63,7 @@ bool s_sel = false;            // The Gone is the selected character
 bool s_goneRun = false;        // the current run is The Gone's
 Object* g_cha = nullptr;       // the ring clip whose onEnterFrame is wrapped
 Function* g_wrap = nullptr; Function* g_orig = nullptr;
-MovieClip* g_portrait = nullptr; MovieClip* g_card = nullptr;
+MovieClip* g_portrait = nullptr; MovieClip* g_card = nullptr; MovieClip* g_cardLocked = nullptr; DisplayObject* g_lockedLabel = nullptr;
 double s_rp = 360, s_rb = 0;
 const double kPi = 3.141592653589793;
 
@@ -143,7 +148,7 @@ std::vector<std::vector<Glyph>> letters(ShapeDef* sd, FillStyle* fill) {
     }
     return out;
 }
-ShapeDef* cardShape(const Value& incV, int frame) {   // the lettering shape of card `frame` (1-based)
+ShapeDef* cardShape(const Value& incV, int frame, int sub = 1) {   // the lettering shape of card `frame` (1-based; sub 2: locked)
     if (!incV.isObj() || incV.o->kind != OK_CLIP) return nullptr;
     MovieClip* inc = (MovieClip*)incV.o;
     CharDef* cd = g_movie.get(inc->charId);
@@ -157,12 +162,12 @@ ShapeDef* cardShape(const Value& incV, int frame) {   // the lettering shape of 
     };
     uint16_t id = depth1(sp, frame - 1);
     CharDef* c = g_movie.get(id);
-    if (c && c->type == CH_SPRITE) { SpriteDef* s2 = (SpriteDef*)c; spriteEnsure(s2); c = g_movie.get(depth1(s2, 0)); }
+    if (c && c->type == CH_SPRITE) { SpriteDef* s2 = (SpriteDef*)c; spriteEnsure(s2); c = g_movie.get(depth1(s2, sub - 1)); }
     return c && c->type == CH_SHAPE ? (ShapeDef*)c : nullptr;
 }
 void dumpCards(const Value& inc) {
-    for (int f = 1; f <= 7; f++) {
-        ShapeDef* sd = cardShape(inc, f); if (!sd) { logf("[gonecard] frame %d: no shape\n", f); continue; }
+    for (int f = 1; f <= 14; f++) {
+        ShapeDef* sd = cardShape(inc, (f - 1) % 7 + 1, f > 7 ? 2 : 1); if (!sd) { logf("[gonecard] frame %d: no shape\n", f); continue; }
         auto rows = letters(sd, nullptr);
         for (size_t r = 0; r < rows.size(); r++) {
             std::string o; char b[64];
@@ -272,6 +277,8 @@ uint16_t letteringShape(const std::string& text, double k, double cx, double cy,
     cache[key] = {id, x0};
     return id;
 }
+#include "mod_thegone_unlocks.inc"
+
 void buildCard(MovieClip* cha) {
     g_card = createEmptyMovieClip(cha, intern("__gonecard"), 30);
     if (!g_card) return;
@@ -314,6 +321,69 @@ void buildCard(MovieClip* cha) {
         synthPut(g_card, probe, dp++, left + boxW + 6, 0);
     }
 }
+// The Gone's card while he is locked, as the other locked characters': his name, "UNLOCKED BY" (the game's own, from
+// Magdalene's locked card) and how, in the cards' lettering
+void buildLockedCard(MovieClip* cha) {
+    g_cardLocked = createEmptyMovieClip(cha, intern("__gonelocked"), 31);
+    if (!g_cardLocked) return;
+    Value inc = V(Value((Object*)cha), "inc");
+    if (inc.isObj() && inc.o->kind == OK_CLIP) { g_cardLocked->m = ((MovieClip*)inc.o)->m; g_cardLocked->scriptXform = true; }
+    if (!g_kit.ok) return;
+    int dp = 1;
+    synthPut(g_cardLocked, letteringShape("THE GONE", 1.1, 95, g_kit.nameCy, 112), dp++, 0, 0);
+    double y = 45;
+    static uint16_t ubId = 0; static double ubY1 = 0;
+    if (!ubId) {
+        ShapeDef* sd = cardShape(inc, 2, 2);
+        if (sd) {
+            FillStyle fill; auto rows = letters(sd, &fill);
+            if (rows.size() >= 2) {
+                auto* out = new ShapeDef(); out->type = CH_SHAPE; ShapeLayer L; L.fills.push_back(g_kit.fill); Path all;
+                double y0 = 1e9, y1 = -1e9, x0 = 1e9, x1 = -1e9;
+                for (auto& g : rows[1]) { for (auto& p : g.paths) { all.verbs.insert(all.verbs.end(), p.verbs.begin(), p.verbs.end()); all.pts.insert(all.pts.end(), p.pts.begin(), p.pts.end()); }
+                    y0 = std::min(y0, (double)g.y0); y1 = std::max(y1, (double)g.y1); x0 = std::min(x0, (double)g.x0); x1 = std::max(x1, (double)g.x1); }
+                L.fillPaths.push_back(all); out->layers.push_back(L); out->bounds = {x0, y0, x1, y1};
+                ubId = synthAddChar(out); ubY1 = y1;
+            }
+        }
+    }
+    if (ubId) { synthPut(g_cardLocked, ubId, dp++, 0, 0); y = ubY1 + 13; }
+    for (const char* line : {"BEATING THREE FLOORS", "BACK TO BACK", "NO HITS AND NO HEARTS"}) {
+        synthPut(g_cardLocked, letteringShape(line, 0.72, 93, y, 184), dp++, 0, 0);
+        y += 17;
+    }
+}
+// "LOCKED" over his portrait, as over the other locked ones' (the game's own, from another portrait's locked frame)
+uint16_t lockedLabel(const Value& cha, int chars, double* outCx, double* outCy) {
+    static uint16_t id = 0; static double cx = 0, cy = 0;
+    if (!id) {
+        for (int e = 1; e < chars && !id; e++) {
+            MovieClip* t = slotClip(cha, e, chars);
+            if (!t) continue;
+            CharDef* cd = g_movie.get(t->charId);
+            if (!cd || cd->type != CH_SPRITE) continue;
+            SpriteDef* sp = (SpriteDef*)cd; spriteEnsure(sp);
+            if (sp->nframes < 2) continue;
+            ShapeDef* best = nullptr; double area = 0;
+            for (int i = 0; i < 2 && i < (int)sp->frames.size(); i++)
+                for (auto& c : sp->frames[i]) if (c.kind == FrameCmd::PLACE && c.place >= 0 && sp->places[c.place].hasId) {
+                    CharDef* d = g_movie.get(sp->places[c.place].id);
+                    if (i == 1 && d && d->type == CH_SHAPE) { ShapeDef* s2 = (ShapeDef*)d; double ar = (s2->bounds.x1 - s2->bounds.x0) * (s2->bounds.y1 - s2->bounds.y0); if (ar > area) { area = ar; best = s2; } }
+                }
+            if (!best) continue;
+            auto rows = letters(best, nullptr);
+            if (rows.empty() || rows[0].size() < 4 || rows[0].size() > 8) continue;
+            auto* out = new ShapeDef(); out->type = CH_SHAPE; ShapeLayer L; FillStyle fill; letters(best, &fill); L.fills.push_back(fill); Path all;
+            double y0 = 1e9, y1 = -1e9, x0 = 1e9, x1 = -1e9;
+            for (auto& g : rows[0]) { for (auto& p : g.paths) { all.verbs.insert(all.verbs.end(), p.verbs.begin(), p.verbs.end()); all.pts.insert(all.pts.end(), p.pts.begin(), p.pts.end()); }
+                y0 = std::min(y0, (double)g.y0); y1 = std::max(y1, (double)g.y1); x0 = std::min(x0, (double)g.x0); x1 = std::max(x1, (double)g.x1); }
+            L.fillPaths.push_back(all); out->layers.push_back(L); out->bounds = {x0, y0, x1, y1};
+            id = synthAddChar(out); cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
+        }
+    }
+    *outCx = cx; *outCy = cy;
+    return id;
+}
 Value wRing(Act& ac, Value thisv, int argc, Value* argv) {
     Value cha = thisv.isObj() ? thisv : Value(g_cha);
     int chars = charCount();
@@ -338,7 +408,7 @@ Value wRing(Act& ac, Value thisv, int argc, Value* argv) {
     for (int e = 0; e < chars; e++) if (MovieClip* t = slotClip(cha, e, chars)) place(t, s_rp - frontValue(e, chars) * step, e, false);
     if (!g_portrait || g_portrait->removed || g_portrait->parent != c) {
         MovieClip* i0 = slotClip(cha, 0, chars);
-        g_portrait = nullptr;
+        g_portrait = nullptr; g_lockedLabel = nullptr;
         if (i0) {
             // (a free depth: the portraits use round(y) * 10 + e, 400-910, and placing at a used one would replace it)
             DisplayObject* d = synthPut(c, i0->charId, 5000, 100, 65, "__gone");
@@ -353,9 +423,32 @@ Value wRing(Act& ac, Value thisv, int argc, Value* argv) {
         }
     }
     if (g_portrait) place(g_portrait, s_rp - chars * step, chars, true);
+    if (!g_portraitShape) if (MovieClip* i0 = slotClip(cha, 0, chars)) for (DisplayObject* k : i0->kids) if (k->kind == OK_SHAPE) { g_portraitShape = k->charId; break; }
+    const bool locked = !unlocked(U_GONE);
+    if (g_portrait) {
+        // locked: a dark figure with "LOCKED" over it, as the other locked characters
+        if (locked) { g_portrait->cx = CX(); g_portrait->cx.rm = g_portrait->cx.gm = g_portrait->cx.bm = 0.55f; g_portrait->cx.am = 0.9f; }
+        else { g_portrait->cx = CX(); g_portrait->cx.rm = g_portrait->cx.gm = g_portrait->cx.bm = 0.35f; g_portrait->cx.ra = g_portrait->cx.ga = g_portrait->cx.ba = 160; }
+        g_portrait->scriptColor = true;
+        if (locked && (!g_lockedLabel || g_lockedLabel->removed || g_lockedLabel->parent != g_portrait)) {
+            double lx = 0, ly = 0; uint16_t lid = lockedLabel(cha, chars, &lx, &ly);
+            g_lockedLabel = lid ? synthPut(g_portrait, lid, 10, 0, 0) : nullptr;
+            if (g_lockedLabel) {
+                // (centred over the head, where the other portraits have it)
+                RectF pb; CharDef* pd = g_movie.get(g_portrait->charId);
+                double topY = -60, midX = 0;
+                if (pd && frameBounds(g_portrait->charId, 1, pb)) { topY = pb.y0; midX = (pb.x0 + pb.x1) / 2; }
+                g_lockedLabel->m = Mat(); g_lockedLabel->m.tx = midX - lx; g_lockedLabel->m.ty = topY - 16 - ly; g_lockedLabel->scriptXform = true;
+            }
+        }
+        if (g_lockedLabel) g_lockedLabel->visible = locked;
+    }
+    if (s_sel && locked) S(root(), "skiner", Value(99.0));   // (the game's Select / Space: no such character, nothing starts)
     if (getenv("ISAAC_GONECARDS")) { static bool once = false; if (!once) { once = true; dumpCards(V(cha, "inc")); } }
     if (!g_card || g_card->removed || g_card->parent != c) buildCard(c);
-    if (g_card) g_card->visible = s_sel;
+    if (!g_cardLocked || g_cardLocked->removed || g_cardLocked->parent != c) buildLockedCard(c);
+    if (g_card) g_card->visible = s_sel && !locked;
+    if (g_cardLocked) g_cardLocked->visible = s_sel && locked;
     return r;
 }
 // "Random" (the card's button, or R): the game picks one of the unlocked characters (cha.rand, then starts the run);
@@ -368,7 +461,7 @@ Value wRander(Act& ac, Value thisv, int argc, Value* argv) {
     int n = rand.isObj() && rand.o->kind == OK_ARRAY ? (int)((Array*)rand.o)->el.size() - 1 : 0;   // (rand = [0] + the unlocked)
     // (its own little generator: the game's random numbers stay as they would be without the mod)
     static uint32_t seed = 0; seed = seed * 1664525u + 1013904223u + g_player.tick * 2654435761u;
-    bool gone = n > 0 && (seed >> 8) % (uint32_t)(n + 1) == (uint32_t)n;
+    bool gone = n > 0 && unlocked(U_GONE) && (seed >> 8) % (uint32_t)(n + 1) == (uint32_t)n;
     Value r = g_randOrig ? callValue(ac, Value((Object*)g_randOrig), thisv, argc, argv) : VUNDEF;
     if (gone && !wasDone && truthy(V(cha, "done"))) { S(cha, "skiner", Value(0.0)); s_sel = true; logf("thegone: Random picked The Gone\n"); }
     else if (!wasDone && truthy(V(cha, "done"))) s_sel = false;
@@ -379,6 +472,14 @@ void ringTick() {
     // (the ring: _root.men.men.cha in Wrath of the Lamb and Eternal, unnamed in the original: the clip with i0 and inc)
     Value sheet = V(V(root(), "men"), "men");
     if (!sheet.isObj() || sheet.o->kind != OK_CLIP) return;
+    {   // the run starts (pos 4) with what was selected when Select was checked, and never a locked The Gone (the
+        // game's own start check is a frame late: patches.cpp charSelectGuard)
+        static int lastPos = -1; static bool selAtCheck = false;
+        int pos = (int)num(V(sheet, "pos"), -1);
+        if (pos == 4 && lastPos == 3 && !truthy(V(V(sheet, "cha"), "done"))) s_sel = selAtCheck && unlocked(U_GONE);
+        if (pos == 3) selAtCheck = s_sel;
+        lastPos = pos;
+    }
     Value cha = V(sheet, "cha");
     if (!cha.isObj() || cha.o->kind != OK_CLIP) {
         cha = VUNDEF;
@@ -386,7 +487,7 @@ void ringTick() {
             if (k->kind == OK_CLIP && ((MovieClip*)k)->childByName(intern("i0")) && ((MovieClip*)k)->childByName(intern("inc"))) { cha = Value((Object*)k); break; }
         if (!cha.isObj()) return;
     }
-    if (cha.o != g_cha) { g_cha = cha.o; g_orig = nullptr; s_sel = false; s_rp = 360; s_rb = 0; g_portrait = nullptr; g_card = nullptr; }
+    if (cha.o != g_cha) { g_cha = cha.o; g_orig = nullptr; s_sel = false; s_rp = 360; s_rb = 0; g_portrait = nullptr; g_card = nullptr; g_cardLocked = nullptr; g_lockedLabel = nullptr; }
     if (!g_wrap) { Function* f = gcNew<Function>(); f->proto = protos::function; f->nat = wRing; f->dbgName = "thegoneRing"; gcPin(f); g_wrap = f; }
     if (!g_randWrap) { Function* f = gcNew<Function>(); f->proto = protos::function; f->nat = wRander; f->dbgName = "thegoneRandom"; gcPin(f); g_randWrap = f; gcAddRoot((GcObj**)&g_randOrig); }
     Value rv = V(cha, "rander");
@@ -402,6 +503,7 @@ void ringTick() {
 
 // ============================================================ the run
 bool s_running = false;
+bool goneRunNow() { return s_goneRun && s_running; }
 MovieClip* g_hudPatch = nullptr;   // covers the HUD's "-LIFE-" (drawn in the HUD band's own colour)
 double s_dealRoom = -1e9; bool s_dealTaken = false;
 Function* g_bjWrap = nullptr; Function* g_bjOrig = nullptr; Object* g_bjA = nullptr;
@@ -409,7 +511,6 @@ const int kShopPrice[] = {0, 3, 5, 5, 15, 2, 3, 3, 7, 1, 2, 3, 5, 5, 0, 0, 3, 3}
 
 Value wBalljunk(Act& ac, Value thisv, int argc, Value* argv) {
     auto orig = [&]() { return g_bjOrig ? callValue(ac, Value((Object*)g_bjOrig), thisv, argc, argv) : VUNDEF; };
-    if (!s_goneRun) return orig();
     Value a((Object*)g_bjA), lows = V(a, "lows"), highs = V(a, "highs"), player = V(a, "player");
     if (!player.isObj() || !lows.isObj() || lows.o != player.o || !highs.isObj() || num(V(highs, "s")) != 5 || truthy(V(highs, "dones"))) return orig();
     Value d = V(highs, "d");
@@ -417,7 +518,13 @@ Value wBalljunk(Act& ac, Value thisv, int argc, Value* argv) {
     int fr = ((MovieClip*)d.o)->cur;
     Value dd = V(d, "d");
     int sub = dd.isObj() && dd.o->kind == OK_CLIP ? ((MovieClip*)dd.o)->cur : 0;
-    if (fr == 1 || (fr == 15 && (sub == 1 || sub == 5 || sub == 13 || sub == 17))) {   // a heart (on the floor or for sale)
+    const bool heart = fr == 1 || (fr == 15 && (sub == 1 || sub == 5 || sub == 13 || sub == 17));   // (on the floor or for sale)
+    if (!s_goneRun) {   // (other characters: a heart picked up ends the streak towards The Gone)
+        Value r = orig();
+        if (heart && (truthy(V(highs, "dones")) || truthy(V(highs, "done")))) heartPicked();
+        return r;
+    }
+    if (heart) {
         S(a, "nohit", VFALSE);
         return VUNDEF;
     }
@@ -469,15 +576,42 @@ void startRun(const Value& a) {
         call(a, "powerlevel", {});
     }
     S(root(), "armor", Value(game() == "og" ? 0.0 : 0.5));
+    // no active item: the game gives Isaac's (the D6 / The Dice, once unlocked) to whoever it thinks is Isaac
+    S(root(), "it", Value(0.0)); S(root(), "itc", Value(1.0));
+    S(root(), "wtfuuz", VTRUE);   // (the game's "already given" mark for Isaac's D6)
+    // (if the game already gave it - Replay: before this tick - it goes from his items too)
+    for (const char* k : {"ups"}) { Value u = V(root(), k); if (u.isObj() && num(arrGet(u, 105)) > 0) setMem(u, Value(105.0), Value(0.0)); }
+    { Value u = V(a, "ups"); if (u.isObj() && num(arrGet(u, 105)) > 0) setMem(u, Value(105.0), Value(0.0)); }
+    { Value c = V(root(), "cols"); if (c.isObj() && c.o->kind == OK_ARRAY) { auto& el = ((Array*)c.o)->el; for (size_t i = 0; i < el.size();) if (num(el[i]) == 105) el.erase(el.begin() + i); else i++; } }
     logf("thegone: a run as The Gone\n");
 }
 }  // namespace
 
+bool goneThingInfo(bool card, int id, std::string& name, std::string& desc, bool& active, int& quality) {
+    active = false;
+    if (card) {
+        if (id != kCardCol) return false;
+        name = "Negative Isaac"; quality = 0;
+        desc = "A shield for 15 seconds, as Book of Shadows: nothing can hurt you until it fades (it blinks first) or you leave the room.";
+        return true;
+    }
+    int k = itemIndex(id);
+    if (k < 0) return false;
+    name = kItemName[k];
+    if (k == 0) { quality = 3; desc = "One enemy shot in four goes straight through you. When you do get hurt, one time in twenty every enemy in the room takes 50 damage."; }
+    else if (k == 1) { quality = 2; active = true; desc = "3 charges. The room turns negative and, for seven seconds, the enemies go for each other."; }
+    else { quality = 0; desc = "Should do something?"; }
+    return true;
+}
+void goneUnlockAll() {   // (GenesisConsole's "unlock": everything, until the game is closed)
+    unlLoad();
+    for (int i = 0; i < U_N; i++) g_u.session[i] = true;
+}
 void thegoneTick(const ModInfo&) {
     static bool rooted = false;
     if (!rooted) {
         rooted = true;
-        for (GcObj** r : {(GcObj**)&g_cha, (GcObj**)&g_orig, (GcObj**)&g_portrait, (GcObj**)&g_card, (GcObj**)&g_hudPatch}) gcAddRoot(r);
+        for (GcObj** r : {(GcObj**)&g_cha, (GcObj**)&g_orig, (GcObj**)&g_portrait, (GcObj**)&g_card, (GcObj**)&g_hudPatch, (GcObj**)&g_cardLocked, (GcObj**)&g_lockedLabel, (GcObj**)&g_mirrorA, (GcObj**)&g_nothingA}) gcAddRoot(r);
     }
     Value R = root();
     int frame = vm.root->kind == OK_CLIP ? ((MovieClip*)vm.root)->cur : 0;
@@ -489,8 +623,25 @@ void thegoneTick(const ModInfo&) {
     static uint32_t serial = 0; bool restarted = modsRunSerial() != serial; serial = modsRunSerial();
     if (s_running && (frame == 5 || newRun || restarted)) { s_running = false; s_goneRun = false; }
     if (!s_running && play && !newRun && frame != 5) {
-        s_running = true; s_goneRun = s_sel;
+        s_running = true; s_goneRun = s_sel && unlocked(U_GONE);
         if (s_goneRun) startRun(a);
+    }
+    // the unlocks: progress, the new things' effects and pictures, the cards
+    menuSetExtras({});   // (collectionTick sets them again while the collection shows)
+    unlLoad();
+    if (!g_soSaveHook) g_soSaveHook = saveHook;
+    secretsInMenu(frame == 5);
+    trackTick(a, inGame, play, frame, s_goneRun && s_running);
+    if (inGame && a.isObj()) { hookBalljunk(a); effectsTick(a, play); }
+    pictureTick();
+    popupTick();
+    if (frame == 5) {   // (pictures the cards need, learnt while the menus show)
+        Value col = V(V(V(R, "men"), "men"), "col");
+        Value i0 = V(col, "i0");
+        if (i0.isObj() && i0.o->kind == OK_CLIP) learnSketchSprite((MovieClip*)i0.o);
+        Value st1 = V(R, "st1");
+        for (int k = 0; k < 3; k++) if (st1.isObj() && arrGet(st1, kItemId[k]).t != T_STR) setMem(st1, Value((double)kItemId[k]), Value(mkstr(kItemName[k])));
+        collectionTick();
     }
     if (!s_goneRun || !inGame || !a.isObj()) {
         if (g_hudPatch && !g_hudPatch->removed && g_hudPatch->parent) removeObject(g_hudPatch);

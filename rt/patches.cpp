@@ -231,9 +231,53 @@ static void tweakOptions(MovieClip* p) {
     }
 }
 
+// GenesisConsole open (the game paused): the game's music code alone keeps running, so a song that ends starts again
+// (or the next one plays) as usual instead of leaving silence until the console is closed
+void recompMusicTick() {
+    Value root((Object*)vm.root);
+    Value f = getMemK(root, intern("soundfra"));
+    if (!f.isObj() || f.o->kind != OK_FUNCTION) return;
+    Act ac{vm.globalScope, VUNDEF, vm.root, nullptr};
+    callValue(ac, f, root, 0, nullptr);
+    runActions();
+}
 // every tick, after the logic
+// Character select: a character must be unlocked to start a run, but the game's Select / Space checks
+// _root.skiner, which the ring only updates on its own frame. Moving onto a locked character and pressing Select in
+// the next instant passed the check with the previous character and started the run with the locked one. When the
+// run starts (darky(150): men.men.pos 4) the ring is put back on the character that was checked (Random, cha.done,
+// is left alone: it only picks unlocked ones).
+static double s_csRoot = 0, s_csCha = 0, s_csPrevCha = 1e9; static int s_csPos = -1;
+static void charSelectGuard(const Value& root) {
+    Value sheet = getMemK(getMemK(root, intern("men")), intern("men"));
+    if (!sheet.isObj() || sheet.o->kind != OK_CLIP) { s_csPos = -1; return; }
+    Value cha = getMemK(sheet, intern("cha"));
+    if (!cha.isObj() || cha.o->kind != OK_CLIP) {   // (the original game: the unnamed ring, with i0 and inc)
+        cha = VUNDEF;
+        for (DisplayObject* k : ((MovieClip*)sheet.o)->kids)
+            if (k->kind == OK_CLIP && ((MovieClip*)k)->childByName(intern("i0")) && ((MovieClip*)k)->childByName(intern("inc"))) { cha = Value((Object*)k); break; }
+        if (!cha.isObj()) { s_csPos = -1; return; }
+    }
+    int pos = (int)toNum(getMemK(sheet, intern("pos")));
+    double c = toNum(getMemK(cha, intern("skiner")));
+    // (a settled pair: the ring's index unchanged since the last tick, so _root.skiner is the one it shows)
+    if (pos == 3 && c == s_csPrevCha) { s_csRoot = toNum(getMemK(root, intern("skiner"))); s_csCha = c; }
+    s_csPrevCha = c;
+    if (pos == 4 && s_csPos >= 3 && !truthy(getMemK(cha, intern("done")))) {
+        if (c != s_csCha || toNum(getMemK(root, intern("skiner"))) != s_csRoot) {
+            setMemK(cha, intern("skiner"), Value(s_csCha));
+            setMemK(root, intern("skiner"), Value(s_csRoot));
+            if (s_csPos == 3) logf("character select: the run starts with the character that was checked (%g)\n", s_csRoot);
+        }
+        s_csPos = 4;
+        return;
+    }
+    s_csPos = pos;
+}
+
 void recompPatchesTick() {
     Value root((Object*)vm.root);
+    charSelectGuard(root);
     installMoveScale();
     installBossMusic();
     installSplatLog();

@@ -1,10 +1,11 @@
 // WideSaac (mods/WideSaac.mod): the whole screen on any aspect ratio.
 //
-// The game is a 4:3 stage. Without the mod, the renderer letterboxes it (black bars). With WideSaac the stage is
-// still drawn as large as the screen allows, but without cutting what lies around it: the game's own background art
-// (the tiled faces behind every screen) fills the sides of a wide screen, or above and below a tall one.
+// The game is a 4:3 stage. Without the mod, the renderer letterboxes it (black bars). With WideSaac the menus are
+// drawn without cutting what lies around the stage (more of their own sheet), and with fill = 1 so is the rest: the
+// game's own background art (the tiled faces behind every screen) fills the sides of a wide screen, or above and
+// below a tall one.
 //
-// Hyper Zoom (option hyper_zoom = 1): during play, the view is the room alone (the HUD band above it is left out), as
+// Hyper Zoom (option hyper_zoom = 1, the default): during play, the view is the room alone (the HUD band above it is left out), as
 // large as the screen allows, so the room fills a 16:9 / 16:10 screen. The map is gone; hearts, the active item with
 // its charges, coins / bombs / keys and the pill / card are the game's own HUD pieces, drawn elsewhere: on the
 // room's right side, like StatOn on the left. It stays on during the whole run (paused and dead too); boss intros, floor
@@ -147,7 +148,9 @@ void stretchShades(MovieClip* root) {
         if (d->kind == OK_CLIP) {
             MovieClip* c = (MovieClip*)d;
             int depth = 0; for (DisplayObject* p = d; p->parent && p->parent != root; p = p->parent) depth++;
-            if (depth < 2 && n != "a" && n != "men")   // (not the room's clip nor the menus' sheet: big, never a shade)
+            // (not the room's clip nor the menus' big sheet - _root.men.men -, never a shade; the menu's own dialogs, such
+            // as Exit Game's, are next to that sheet)
+            if (depth < 3 && n != "a" && !(n == "men" && depth >= 1))
                 for (DisplayObject* k : c->kids) todo.push_back({k, toRoot * k->m});
             continue;
         }
@@ -157,7 +160,9 @@ void stretchShades(MovieClip* root) {
         double x0, y0, x1, y1, x2, y2, x3, y3;
         toRoot.apply(r.x0, r.y0, x0, y0); toRoot.apply(r.x1, r.y1, x1, y1); toRoot.apply(r.x1, r.y0, x2, y2); toRoot.apply(r.x0, r.y1, x3, y3);
         double bx0 = std::min({x0, x1, x2, x3}), bx1 = std::max({x0, x1, x2, x3}), by0 = std::min({y0, y1, y2, y3}), by1 = std::max({y0, y1, y2, y3});
-        if (!(bx0 <= 2 && by0 <= 2 && bx1 >= 638 && by1 >= 478)) continue;
+        // (most of the 640x480 screen: the menu's dialogs are placed on its panning sheet, a little off)
+        double ox = std::max(0.0, std::min(640.0, bx1) - std::max(0.0, bx0)), oy = std::max(0.0, std::min(480.0, by1) - std::max(0.0, by0));
+        if (ox * oy < 0.85 * 640 * 480) continue;
         // (not inside a filter: a larger shape would make its off-screen layer that much larger)
         bool filtered = false;
         for (DisplayObject* p = d; p && p != root; p = p->parent) if (!p->filters.empty()) { filtered = true; break; }
@@ -172,6 +177,39 @@ void stretchShades(MovieClip* root) {
         static const bool dbg = getenv("ISAAC_SHADELOG") != nullptr;   // (testing)
         if (dbg) logf("[shade] %s char %u in %s: k %.2f bounds %.0f,%.0f-%.0f,%.0f\n", n.c_str(), d->charId, d->parent && d->parent->name ? d->parent->name->s.c_str() : "-", k, bx0, by0, bx1, by1);
     }
+}
+// Soul hearts (and the other non-red hearts) have a see-through grey outline, made to sit on the HUD's black band:
+// over the room (Hyper Zoom) they looked washed out. Each one gets a black heart behind it (the red heart's shape,
+// all black), like the band's.
+MovieClip* g_soulBack = nullptr;
+void soulBacks(const Value& hudV, bool on) {
+    Value lif = V(hudV, "lif");
+    if (!on || !lif.isObj() || lif.o->kind != OK_CLIP) { if (g_soulBack && !g_soulBack->removed && g_soulBack->parent) g_soulBack->visible = false; return; }
+    MovieClip* L = (MovieClip*)lif.o;
+    if (!g_soulBack || g_soulBack->removed || g_soulBack->parent != L) {
+        g_soulBack = createEmptyMovieClip(L, intern("__soulback"), -16384);   // (under the hearts: the timeline's depths 1 and up)
+        if (!g_soulBack) return;
+    }
+    g_soulBack->visible = true;
+    // the red heart's shape: what a heart clip shows on its first frame
+    static uint16_t redHeart = 0;
+    std::vector<MovieClip*> hearts;
+    for (DisplayObject* k : L->kids) if (k->kind == OK_CLIP && k != g_soulBack && k->name && k->name->s.size() >= 2 && k->name->s[0] == 'h') hearts.push_back((MovieClip*)k);
+    if (!redHeart && !hearts.empty()) {
+        SpriteDef* sp = (SpriteDef*)hearts[0]->def;
+        if (sp && !sp->frames.empty()) for (auto& c : sp->frames[0]) if (c.kind == FrameCmd::PLACE && c.place >= 0 && sp->places[c.place].depth == 1) redHeart = sp->places[c.place].id;
+    }
+    if (!redHeart) return;
+    size_t n = 0;
+    for (MovieClip* h : hearts) {
+        if (!h->visible || h->cur < 5) continue;   // (frames 1-3: red hearts, 4: none)
+        DisplayObject* b = n < g_soulBack->kids.size() ? g_soulBack->kids[n] : synthPut(g_soulBack, redHeart, (int)n + 1, 0, 0);
+        n++;
+        if (!b) continue;
+        b->visible = true; b->m = h->m; b->scriptXform = true;
+        b->cx = CX(); b->cx.rm = b->cx.gm = b->cx.bm = 0; b->scriptColor = true;
+    }
+    for (size_t i = n; i < g_soulBack->kids.size(); i++) g_soulBack->kids[i]->visible = false;
 }
 // A boss's intro ("Isaac VS ...", _root on its "bosscuts" frame) comes between entering the boss room and the fight
 // (and the floor cutscenes and endings, likewise):
@@ -228,12 +266,14 @@ bool wideHudMove(int group, Mat& m) {
 
 void wideTick(const ModInfo& mod) {
     static bool rooted = false;
-    if (!rooted) { rooted = true; gcAddRoot((GcObj**)&g_mapClip); for (auto& e : g_mapEdge) gcAddRoot((GcObj**)&e); gcAddRoot((GcObj**)&g_mapBack); }
+    if (!rooted) { rooted = true; gcAddRoot((GcObj**)&g_soulBack); gcAddRoot((GcObj**)&g_mapClip); for (auto& e : g_mapEdge) gcAddRoot((GcObj**)&e); gcAddRoot((GcObj**)&g_mapBack); }
     s_hyperNow = false;
     for (auto& g : g_groupOn) g = false;
     g_viewReq = ViewReq();
-    bool fill = mod.opt("fill", "1") != "0";
-    bool hyper = mod.opt("hyper_zoom", "0") == "1";
+    // the menus (_root frame 5) always fill the screen; fill = 1 also the rest (the game's background on the sides)
+    const bool menus = vm.root->kind == OK_CLIP && ((MovieClip*)vm.root)->cur == 5;
+    bool fill = mod.opt("fill", "0") == "1" || menus;
+    bool hyper = mod.opt("hyper_zoom", "1") == "1";
     if (fill) { g_viewReq.set = true; g_viewReq.clip = false; g_viewReq.r[2] = (float)g_stageW; g_viewReq.r[3] = (float)g_stageH; }
     // the menus (_root frame 5) are one big sheet that pans: on a wide screen show more of it instead of the frame of
     // faces around the 640x480 (_root.overlay is drawn over everything outside it)
@@ -257,7 +297,10 @@ void wideTick(const ModInfo& mod) {
     double vx0, vy0, vx1, vy1; rm.apply(0, kRoomTop, vx0, vy0); rm.apply(640, 480, vx1, vy1);
     g_viewReq.set = true; g_viewReq.clip = !fill;
     g_viewReq.r[0] = (float)vx0; g_viewReq.r[1] = (float)vy0; g_viewReq.r[2] = (float)vx1; g_viewReq.r[3] = (float)vy1;
-    if (!inGame || !hudV.isObj() || hudV.o->kind != OK_CLIP || !((MovieClip*)hudV.o)->visible) { if (g_mapClip) g_mapClip->visible = false; g_mapFade = 0; return; }
+    // nothing above the room is ever drawn (while the view eases in from the menu's, the empty HUD band - white, the
+    // stage's colour - showed at the top of the screen)
+    g_viewReq.cut = true; g_viewReq.c[0] = -1e6f; g_viewReq.c[1] = (float)vy0; g_viewReq.c[2] = 1e6f; g_viewReq.c[3] = 1e6f;
+    if (!inGame || !hudV.isObj() || hudV.o->kind != OK_CLIP || !((MovieClip*)hudV.o)->visible) { if (g_mapClip) g_mapClip->visible = false; g_mapFade = 0; soulBacks(hudV, false); return; }
     MovieClip* hud = (MovieClip*)hudV.o;
     s_hyperNow = true; s_runSeen = true;
     // The column goes over the room's right wall, like StatOn over the left one: past the room, the game's own
@@ -288,6 +331,17 @@ void wideTick(const ModInfo& mod) {
             const double sc = 0.86, cx0 = 320, cy0 = 255, cy1 = (kRoomTop + 480) / 2;
             Mat t; t.a = t.d = sc; t.tx = cx0 - cx0 * sc; t.ty = cy1 - cy0 * sc;
             SnapOv& o = g_snapOv[k]; o.hasM = true; o.m = t * k->m;
+            // ... but its dimming (a rectangle as large as the screen) keeps its size: it must cover every edge
+            Mat pNew = t * k->m, pInv; pNew.invert(pInv);
+            for (DisplayObject* c : ((MovieClip*)k)->kids) {
+                RectF cb = stageBounds(c);
+                if (!cb.valid()) continue;
+                double x0, y0, x1, y1; inv.apply(cb.x0, cb.y0, x0, y0); inv.apply(cb.x1, cb.y1, x1, y1);
+                double w = std::min(640.0, std::max(x0, x1)) - std::max(0.0, std::min(x0, x1));
+                double h = std::min(480.0, std::max(y0, y1)) - std::max(0.0, std::min(y0, y1));
+                if (w <= 0 || h <= 0 || w * h < 0.85 * 640 * 480) continue;
+                SnapOv& co = g_snapOv[c]; co.hasM = true; co.m = pInv * (k->m * c->m);
+            }
             continue;
         }
         if (n == "paus" || n == "bar" || n.compare(0, 2, "__") == 0) continue;   // (the pause sheet, the boss's health bar, the mods' own clips)
@@ -298,5 +352,6 @@ void wideTick(const ModInfo& mod) {
     }
     // no map, or the Minimap+
     minimap(root, hud, play && s_mapWanted.load() && mod.opt("minimap", "1") != "0");
+    soulBacks(hudV, true);
 }
 }  // namespace fl

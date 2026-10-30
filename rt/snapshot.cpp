@@ -75,8 +75,13 @@ static void addNode(Snapshot& s, DisplayObject* d, int32_t parent) {
             default: n.kind = SN_CONTAINER; break;
         }
     }
-    if (d->kind == OK_CLIP) for (DisplayObject* k : ((MovieClip*)d)->kids) addNode(s, k, (int32_t)idx);
-    else if (d->kind == OK_BUTTON) for (DisplayObject* k : ((ButtonObj*)d)->kids) addNode(s, k, (int32_t)idx);
+    const SnapOv* ov = nullptr;
+    if (!g_snapOv.empty()) { auto it = g_snapOv.find(d); if (it != g_snapOv.end()) ov = &it->second; }
+    if (!ov || !ov->hideKids) {
+        if (d->kind == OK_CLIP) for (DisplayObject* k : ((MovieClip*)d)->kids) addNode(s, k, (int32_t)idx);
+        else if (d->kind == OK_BUTTON) for (DisplayObject* k : ((ButtonObj*)d)->kids) addNode(s, k, (int32_t)idx);
+    }
+    if (ov && ov->extra) { DisplayObject* x = ov->extra; addNode(s, x, (int32_t)idx); }
     s.nodes[idx].end = (uint32_t)s.nodes.size();
 }
 

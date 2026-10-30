@@ -673,11 +673,15 @@ static Value deser(const std::string& s, size_t& i, int depth) {
     }
 }
 static Object* g_so = nullptr;
-bool g_saveLocked = false;   // (GenesisConsole: nothing is written to the save while it is on)
+bool g_saveLocked = false;
+void (*g_soSaveHook)(const Value& data, bool before) = nullptr;   // (GenesisConsole: nothing is written to the save while it is on)
 static Value so_flush(Act&, Value t, int, Value*) {
     if (!t.isObj()) return VFALSE;
     if (g_saveLocked) return VTRUE;
-    std::string o = "ISAACSO1"; ser(o, getProp(t.o, intern("data")), 0);
+    Value data = getProp(t.o, intern("data"));
+    if (g_soSaveHook) g_soSaveHook(data, true);    // (mods: take out what must not be saved)
+    std::string o = "ISAACSO1"; ser(o, data, 0);
+    if (g_soSaveHook) g_soSaveHook(data, false);   // (... and put it back)
     if (g_savePath.empty()) return VFALSE;
     std::string tmp = g_savePath + ".tmp";
     FILE* f = platformFopen(tmp, "wb"); if (!f) { logf("save: can't write %s\n", tmp.c_str()); return VFALSE; }

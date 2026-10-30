@@ -84,6 +84,7 @@ struct MovieClip final : DisplayObject {
     MovieClip* execNext = nullptr;
     int streamChan = -1;          // audio channel of the timeline stream
     int lastStreamFrame = -1;
+    int reqFrame = 0;             // the frame last asked for with gotoAndStop / gotoAndPlay (it may be past the last one)
     void trace(Tracer& tr) override;
 
     DisplayObject* childAtDepth(int d) const;
@@ -179,6 +180,10 @@ bool removeMovieClip(DisplayObject* d);
 bool swapDepths(DisplayObject* d, const Value& target);
 MovieClip* attachMovie(MovieClip* parent, const std::string& linkName, Str* newName, int depth, Object* init);
 MovieClip* createEmptyMovieClip(MovieClip* parent, Str* name, int depth);
+MovieClip* newDetachedClip();   // an empty clip on no display list (mods: drawn only through SnapOv::extra)
+// (mods) clips sent to a frame number past their last one (>= 100): the requested number is in reqFrame. Kept alive
+// in this array (one Value per clip) until the mod that reads it drops them.
+extern Object* g_overFrames;
 int frameFromValue(MovieClip* c, const Value& v, MovieClip** target);
 bool hitTestPoint(DisplayObject* d, double gx, double gy, bool shapeFlag);
 Mat worldMatrix(DisplayObject* d);

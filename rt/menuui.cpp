@@ -299,6 +299,9 @@ static bool itemIcon(ButtonObj* b) {
     DisplayObject* sheet = p->parent;
     return sheet && sheet->name && sheet->name->s == "paus" && sheet->parent && sheet->parent->name && sheet->parent->name->s == "hud";
 }
+// (mods) more options drawn by a mod (The Gone's items in the collection): their stage rectangles, set every tick
+static std::vector<std::pair<DisplayObject*, RectF>> g_menuExtras;
+void menuSetExtras(const std::vector<std::pair<DisplayObject*, RectF>>& v) { g_menuExtras = v; }
 static std::vector<Cand> candidates() {
     std::vector<Cand> out;
     std::vector<ButtonObj*> bs; visibleButtons(bs);
@@ -354,6 +357,8 @@ static std::vector<Cand> candidates() {
         for (auto& o : out) if (std::fabs(o.cx - c.cx) < 6 && std::fabs(o.cy - c.cy) < 6) { o = c; dup = true; break; }
         if (!dup) out.push_back(c);
     }
+    if (!g_modalBtn)   // (a mod's options: on the screen it drew them on, not under a dialog)
+        for (auto& e : g_menuExtras) if (e.first && e.second.valid()) out.push_back({e.first, e.second, (e.second.x0 + e.second.x1) / 2, (e.second.y0 + e.second.y1) / 2, nullptr});
     // under such a full-screen button, only what the mouse could still click: the pause screen's own options stay
     // in the display list under the in-game "are you sure?" note
     if (g_modalBtn) {
@@ -369,7 +374,8 @@ static const Cand* findFocus(const std::vector<Cand>& cs) {
     return nullptr;
 }
 static void hover(const Cand& c) {
-    if (c.d->kind == OK_BUTTON) mouseEvent(c.cx, c.cy, 0);
+    bool extra = false; for (auto& e : g_menuExtras) extra |= e.first == c.d;   // (a mod's option: it looks at the pointer)
+    if (c.d->kind == OK_BUTTON || extra) mouseEvent(c.cx, c.cy, 0);
     g_lastFx = c.cx; g_lastFy = c.cy;
 }
 static bool isBackButton(DisplayObject* d) {   // the sheets' "Back" buttons answer to Escape (key code 19)
@@ -386,9 +392,17 @@ static DisplayObject* startButton() {   // the title menu's "Start": the first b
     }
     return nullptr;
 }
+static MovieClip* charRing();
 // the option selected when a screen opens (or the selected one goes away)
 static const Cand* defaultFocus(const std::vector<Cand>& cs) {
     const Cand* pick = nullptr;
+    if (MovieClip* ring = charRing()) {   // "Who am I?": Select (the note at the bottom right, outside the ring)
+        for (auto& c : cs) {
+            bool inRing = false; for (DisplayObject* q = c.d; q; q = q->parent) if (q == ring) { inRing = true; break; }
+            if (!inRing && (!pick || c.cx + c.cy > pick->cx + pick->cy)) pick = &c;
+        }
+        if (pick) return pick;
+    }
     {   // a Yes / No dialog: "No" (the full-screen button; on the pause screen itself that one is Back: not this rule)
         MovieClip* sheet = optionsSheet();
         bool pauseScreen = g_inGame && (!sheet || sheet->cur == 2);
@@ -463,6 +477,28 @@ static void click(const Cand& c) {
     mouseEvent(x, y, 0); mouseEvent(x, y, 1); mouseEvent(x, y, 2);
 }
 
+// Escape on the pause screen itself (not one of its sheets): resume, as P does. The pause sheet's "Exit to main
+// menu" also answers to Escape, so it used to ask whether to quit the run instead. Logic thread (key events).
+bool recompInGameplay(bool* inGame);
+bool menuEscapeResumes() {
+    bool inGame = false, play = recompInGameplay(&inGame);
+    if (!inGame || play) return false;
+    MovieClip* sheet = optionsSheet();
+    if (sheet && sheet->cur != 2) return false;
+    pulse(80, 0);
+    return true;
+}
+// the ring of characters, when the menu shows the character select page (_root.men.men.pos 3): _root.men.men.cha
+// (Wrath of the Lamb, Eternal), or in the original the clip with i0 and inc
+static MovieClip* charRing() {
+    Value sheet = getMemK(getMemK(Value((Object*)vm.root), intern("men")), intern("men"));
+    if (!sheet.isObj() || sheet.o->kind != OK_CLIP || toNum(getMemK(sheet, intern("pos"))) != 3) return nullptr;
+    Value cha = getMemK(sheet, intern("cha"));
+    if (cha.isObj() && cha.o->kind == OK_CLIP) return ((MovieClip*)cha.o)->visible ? (MovieClip*)cha.o : nullptr;
+    for (DisplayObject* k : ((MovieClip*)sheet.o)->kids)
+        if (k->kind == OK_CLIP && ((MovieClip*)k)->childByName(intern("i0")) && ((MovieClip*)k)->childByName(intern("inc"))) return k->visible ? (MovieClip*)k : nullptr;
+    return nullptr;
+}
 void padNavEvent(int code) {
     if (code == NAV_OFF) { g_navOn = false; return; }
     if (g_uiOpen || g_gameplay) return;
@@ -482,6 +518,28 @@ void padNavEvent(int code) {
     if (!f) f = ensureFocus(cs);
     if (code == NAV_CONFIRM) { if (!fresh || cs.size() == 1) click(*f); return; }
     if (code == NAV_BACK) { goBack(cs); return; }
+    // the character select screen ("Who am I?"): left / right turn the ring of characters (the game's own arrow
+    // keys); up / down go through its other options from top to bottom (Back, Hard mode, Select, Random)
+    if (MovieClip* ring = charRing()) {
+        if (code == NAV_LEFT || code == NAV_RIGHT) { pulse(code == NAV_LEFT ? 37 : 39, 0); return; }
+        if (code == NAV_UP || code == NAV_DOWN) {
+            if (fresh) return;   // (the first press only shows Select, where the selection starts)
+            // (the ring's own buttons: its two arrows, and Random below them - the lowest one)
+            std::vector<const Cand*> opts; const Cand* random = nullptr;
+            for (auto& c : cs) {
+                bool inRing = false; for (DisplayObject* q = c.d; q; q = q->parent) if (q == ring) { inRing = true; break; }
+                if (!inRing) opts.push_back(&c);
+                else if (!random || c.cy > random->cy) random = &c;
+            }
+            if (random) opts.push_back(random);
+            std::sort(opts.begin(), opts.end(), [](const Cand* a, const Cand* b) { return a->cy < b->cy; });
+            if (opts.empty()) return;
+            int at = -1; for (size_t i = 0; i < opts.size(); i++) if (opts[i]->d == f->d) at = (int)i;
+            int to = at < 0 ? 0 : std::max(0, std::min((int)opts.size() - 1, at + (code == NAV_DOWN ? 1 : -1)));
+            g_focus = opts[to]->d; hover(*opts[to]);
+            return;
+        }
+    }
     if (fresh) return;   // the first press only shows where the outline is
     static const double dirs[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
     double dx = dirs[code][0], dy = dirs[code][1];
