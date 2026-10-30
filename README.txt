@@ -115,7 +115,8 @@ Included:
                       Pentagram, Book of Belial, earlier devil rooms...).
                       Options in StatOn.mod (or in the mod manager): show_changes = 0
                       hides the differences, show_deals = 0 the devil / angel chances,
-                      opacity = 10-100. It only reads the game: runs play exactly the
+                      opacity = 10-100, size = 1-5 (3 normal), margin = 1-5 (1: next
+                      to the left edge). It only reads the game: runs play exactly the
                       same with it on.
   GenesisConsole      a console to type commands during a run, like Rebirth's: give
   (genesis)           items, spawn enemies, bosses, pickups, trinkets and cards, change
@@ -125,11 +126,12 @@ Included:
                       pauses while it is open. Type "help" for the commands; all of
                       them are explained in tools/genesis_wiki.html.
                       WHILE IT IS ON, NOTHING IS SAVED: no achievements, unlocks,
-                      statistics or collection (your save is left as it was).
-  WideSaac (widesaac) the whole screen on wide screens (16:9, 16:10, 21:9...) and any
-                      other shape: no black bars, the game's own background fills the
-                      sides, and the menus fill the whole screen (more of the menu's
-                      own sheet is shown, nothing is stretched); screen-wide shading
+                      statistics or collection (your save is left as it was). Its
+                      "unlock" command unlocks everything for that session only.
+  WideSaac (widesaac) for wide screens (16:9, 16:10, 21:9...) and any other shape:
+                      black bars by default, or with fill = 1 the game's own
+                      background fills the sides and the menus fill the whole screen
+                      (more of the menu's own sheet, nothing stretched); screen-wide shading
                       (the pause screen, fades) covers the whole screen too. With Hyper Zoom (option hyper_zoom, a tick box in the mod
                       manager) the room itself fills the screen while you play: the
                       HUD band and the map go, and your hearts (top right), active
@@ -152,7 +154,7 @@ Included:
   Itemnomicon        walk up to an item, a trinket or a card you can pick up or buy
   (itemnomicon)      and a card over it says what it is: its name (in the colour of its
                       quality, as Rebirth rates the same items: grey 0, white 1, blue
-                      2, violet 3, gold 4), passive or active (with its charges), the
+                      2, violet 3, gold 4), passive or active item and its quality, the
                       stats it changes (green up, red down) and what it does. The stat changes are the
                       game's own, measured in each version (for Isaac with nothing
                       else: some items stack differently). Options: range = 0.5-4
@@ -176,7 +178,15 @@ Included:
                       hearts: he can't pick up hearts, gain heart containers or extra
                       lives, and one hit kills him. In a devil room he can take one
                       deal for free; then the other deals disappear. "Random" can
-                      pick him too.
+                      pick him too. He is locked at first: clear three floors in a
+                      row without getting hit or picking up a heart. With him, Mom's
+                      Heart unlocks the card Negative Isaac (a playing card with the
+                      red back: 15-second shield), Mom's
+                      Heart with no item but his own unlocks Nothing (treasure rooms:
+                      some enemies just aren't there), Isaac unlocks The Void Shard
+                      (devil rooms: enemy shots may go through you) and Satan
+                      unlocks Black Mirror (treasure rooms: the room in negative and
+                      the enemies fight each other). Kept in saves/thegone_<game>.txt.
   RainbowVision       colours for colour-blind players: the whole picture is
   (rainbowvision)     recoloured so colours you can't tell apart look different
                       (hearts, pills, enemies). Option type = deuteranopia (green-
@@ -327,6 +337,44 @@ CHANGES IN VERSION 15 (v1.5.0 public release numbering)
   and reads (tools/mod_manager.html makes it too, without opening any folder).
 - Slightly lower memory use and faster variable lookups in the game's code (on every
   platform; runs play exactly the same).
+- Pause screen: Escape (or the controller's back button) closes it and goes on with the
+  run, instead of asking whether to go back to the main menu.
+- "Who Am I?" with a controller: left / right turn the circle of characters, up / down
+  move between Back, Hard mode, Select and Random.
+- WideSaac: black bars again by default (fill = 1 for the game's background), the
+  background no longer shows for a moment between screens, the dimming behind "Delete
+  Save" and "Exit Game" covers the whole screen, no white flash at the top when a run
+  starts with Hyper Zoom, and soul hearts keep their dark backing with Hyper Zoom.
+- GenesisConsole: the music goes on while the console is open, and a new command,
+  "unlock", unlocks everything until you close the game (not saved).
+- StatOn: size and margin options (1-5) for how big the stats are and how far from the
+  left edge.
+- Itemnomicon: the line under the name only says passive / active item and its quality,
+  so it is never cut.
+- Mod manager: mods grouped by kind, a one-line summary each, and sliders for options
+  with a range.
+- The Gone has to be unlocked (three floors in a row without a hit or a heart), shows as
+  "Locked" until then, and unlocks four new things of his own: Negative Isaac (card), The
+  Void Shard, Black Mirror and Nothing, each with its "You unlocked" card (also among the
+  found secrets), an icon in the collection and a description in Itemnomicon.
+- GenesisConsole's "unlock" unlocks everything only until the game is closed (nothing is
+  saved).
+- A tear of very high damage no longer shows its shadow for a moment at the top left.
+- WideSaac: the menus always fill the screen; Hyper Zoom on by default; the death screen's
+  dimming covers the whole screen with Hyper Zoom.
+- PillLog: the banner option is off by default, and a new opacity option. Itemnomicon:
+  options to leave out trinkets and cards. StatOn: size 1 by default.
+- The Gone: items whose only effect is health never show up in his runs (another item of
+  the same pool instead); no D6 after Replay either. Black Mirror: the enemies chase and
+  shoot each other, ignoring Isaac, while it lasts. GenesisConsole can spawn Negative
+  Isaac ("spawn card negative isaac").
+- Character select: a locked character can no longer be started by moving onto it and
+  pressing Select in the same instant (the game checked the character shown a moment
+  before). With a controller, "Who Am I?" starts on Select.
+- GenesisConsole: the game's clock stops while the console pauses it (closing it during a
+  fade made the screen flash bright).
+- mods/installed.txt is gone: a mod that came with the program and was deleted stays
+  deleted because mods.txt still lists it (an old installed.txt is moved into mods.txt).
 
 CHANGES IN VERSION 14 (v1.4.0 public release numbering)
 --------------------------------------------------------

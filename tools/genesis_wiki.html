@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GenesisConsole wiki</title>
+<!--
+  Everything the GenesisConsole mod of IsaacRecomp can do (mods/GenesisConsole.mod, rt/mod_genesis.cpp).
+  Works offline: open this file in any browser.
+-->
+<style>
+  :root {
+    --paper: #e2dbcf;
+    --paper-2: #ebe5db;
+    --ink: #4a4744;
+    --ink-soft: #66625d;
+    --flesh: #c99694;
+    --blood: #8c2a2a;
+    --black: #0c0c0c;
+    --pin: #9a9a9a;
+    --ok: #3d6b3a;
+    --gold: #9a6a12;
+    --head: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE", cursive;
+    --body: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE", cursive;
+    --mono: ui-monospace, Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  html { scroll-behavior: smooth; }
+  body { min-height: 100vh; background: var(--paper); color: var(--ink); font: 18px/1.5 var(--body); overflow-x: hidden; position: relative; }
+  .face {
+    position: fixed; right: -190px; bottom: -190px; width: 380px; height: 380px;
+    border-radius: 50%; background: var(--flesh); border: 26px solid var(--black); pointer-events: none; z-index: 0;
+  }
+  main { position: relative; z-index: 1; max-width: 1000px; margin: 0 auto; padding: 36px 16px 90px; }
+  h1 { font: bold 46px/1.05 var(--head); margin: 0 0 8px; }
+  .lede { margin: 0 0 22px; color: var(--ink-soft); max-width: 66ch; }
+  @media (max-width: 700px) { h1 { font-size: 34px; } }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 28px; font-size: 17px; }
+  nav.toc a { color: var(--blood); text-decoration: none; border-bottom: 2px dashed rgba(140,42,42,.35); }
+  nav.toc a:hover { border-bottom-style: solid; }
+
+  .note {
+    position: relative; background: var(--paper-2); padding: 34px 24px 22px; margin-bottom: 30px;
+    box-shadow: 0 10px 18px -10px rgba(0,0,0,.35), 0 1px 0 rgba(0,0,0,.08);
+  }
+  .note::before {
+    content: ""; position: absolute; top: 10px; left: 50%; width: 18px; height: 18px; margin-left: -9px;
+    border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff, var(--pin) 55%, #6d6d6d);
+    box-shadow: 2px 4px 5px rgba(0,0,0,.3);
+  }
+  .note.tilt-l { transform: rotate(-.4deg); } .note.tilt-r { transform: rotate(.35deg); }
+  @media (max-width: 700px) { .note.tilt-l, .note.tilt-r { transform: none; } }
+  h2 { font: bold 28px/1.15 var(--head); margin: 0 0 10px; }
+  h3 { font: bold 21px/1.2 var(--head); margin: 18px 0 6px; }
+  p { margin: 0 0 12px; }
+  .soft { color: var(--ink-soft); }
+  ul { margin: 0 0 12px; padding-left: 24px; } li { margin: 0 0 6px; }
+  code, kbd { font: 15px/1.3 var(--mono); }
+  code { background: rgba(0,0,0,.07); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+  kbd { display: inline-block; background: #f6f2ea; border: 2px solid var(--ink); border-bottom-width: 4px; border-radius: 5px; padding: 0 6px; margin: 0 1px; }
+  .warn { border-left: 8px solid var(--blood); background: rgba(140,42,42,.11); color: #5a1a1a; padding: 14px 16px; margin: 0 0 30px; }
+  .warn b { color: var(--blood); }
+  .tip { border-left: 6px solid var(--ok); background: rgba(61,107,58,.1); padding: 10px 14px; margin: 12px 0; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 800px) { .grid3 { grid-template-columns: 1fr; } }
+  .card { background: rgba(255,255,255,.35); border: 2px dashed #b9b0a2; border-radius: 8px; padding: 12px 14px; }
+  .card h3 { margin-top: 0; }
+
+  .search { display: flex; gap: 10px; align-items: center; margin: 4px 0 14px; flex-wrap: wrap; }
+  .search input {
+    font: 17px var(--mono); padding: 6px 10px; border: 2px solid var(--ink); border-radius: 6px; background: #f7f3ec;
+    color: var(--ink); width: min(360px, 100%);
+  }
+  .search input:focus-visible { outline: 3px solid var(--blood); outline-offset: 2px; }
+  .count { color: var(--ink-soft); font-size: 15px; }
+
+  .tbl { width: 100%; border-collapse: collapse; font-size: 16px; }
+  .tbl th { text-align: left; font: bold 16px var(--head); border-bottom: 3px solid var(--ink); padding: 6px 8px; }
+  .tbl td { border-bottom: 1px dashed #c4bcaf; padding: 6px 8px; vertical-align: top; }
+  .tbl td.cmd { font: 15px var(--mono); white-space: nowrap; color: var(--black); }
+  .tbl td.num { font: 15px var(--mono); text-align: right; width: 4.5em; }
+  .tbl tr.hidden { display: none; }
+  .scroll { overflow-x: auto; }
+  .tag { font: 12px var(--mono); border-radius: 4px; padding: 1px 5px; margin-left: 6px; white-space: nowrap; vertical-align: 1px; }
+  .tag.boss { background: var(--blood); color: #fff; }
+  .tag.ver { background: #d3cbbd; color: var(--ink); }
+  .ex { font: 15px var(--mono); color: var(--gold); }
+  .cols2 { columns: 2; column-gap: 30px; } @media (max-width: 700px) { .cols2 { columns: 1; } }
+  .cols2 li { break-inside: avoid; }
+  footer { color: var(--ink-soft); font-size: 16px; }
+  a { color: var(--blood); }
+</style>
+</head>
+<body>
+<div class="face" aria-hidden="true"></div>
+<main>
+  <h1>GenesisConsole</h1>
+  <p class="lede">A console inside the game, like the one in Rebirth: type a command during a run to give yourself
+  items, spawn anything, change your stats, become invincible, open every door or jump to any room or floor. This page
+  explains everything it can do.</p>
+
+  <div class="warn" role="note"><b>While GenesisConsole is on, nothing is saved.</b> No achievements, no unlocks, no
+  statistics, no collection, and changes to the options are not kept either. The game can't unlock anything during
+  those sessions. Your save file isn't touched: turn the mod off and everything is as it was. A small
+  <b>GENESIS - NOT SAVED</b> in the corner reminds you during runs.</div>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#on">Turning it on</a><a href="#open">Opening it</a><a href="#typing">Typing</a><a href="#commands">Commands</a>
+    <a href="#spawn">What can be spawned</a><a href="#enemies">Enemies and bosses</a><a href="#pickups">Pickups</a>
+    <a href="#trinkets">Trinkets and cards</a><a href="#rooms">Rooms and floors</a><a href="#stats">Stats</a><a href="#options">Options</a>
+    <a href="#notes">Good to know</a>
+  </nav>
+
+  <section class="note tilt-l" id="on" aria-labelledby="h-on">
+    <h2 id="h-on">Turning it on</h2>
+    <p>The mod is the file <code>GenesisConsole.mod</code> in the game's <code>mods</code> folder. Open
+    <code>tools/mod_manager.html</code>, choose the game's folder, switch <b>GenesisConsole</b> on and save. Or write it in
+    <code>isaac.ini</code>: <code>mods = genesis</code> (with StatOn too: <code>mods = staton, genesis</code>). Then start the
+    game: <code>log.txt</code> says <i>GenesisConsole is on</i>.</p>
+    <p class="soft">It works in the three games (the original, Wrath of the Lamb and Eternal Edition) and on every platform:
+    Windows, Linux, Android and Switch.</p>
+  </section>
+
+  <section class="note tilt-r" id="open" aria-labelledby="h-open">
+    <h2 id="h-open">Opening and closing it</h2>
+    <p>It opens during a run (not in the menus or during a cutscene). The game pauses while it's open.</p>
+    <div class="grid3">
+      <div class="card"><h3>Keyboard</h3>
+        <p>The key above <kbd>Tab</kbd>, left of <kbd>1</kbd> (<kbd>`</kbd>, <kbd>º</kbd>, <kbd>²</kbd> or <kbd>^</kbd>,
+        depending on your keyboard). Close with the same key or <kbd>Esc</kbd>. Another key can be chosen in the options.</p></div>
+      <div class="card"><h3>Controller</h3>
+        <p><b>Back</b> / <b>View</b> (Xbox), <b>Share</b> / <b>Create</b> (PlayStation), <b>&minus;</b> (Switch). With the mod on, that
+        button opens the console instead of pausing (<b>Start</b> / <b>+</b> still pause). Close with <b>B</b> or the same
+        button.</p></div>
+      <div class="card"><h3>Touch screen</h3>
+        <p>Touch the screen with <b>three fingers</b> at once (Android, Switch in handheld mode). Close the same way, or with
+        Android's back button.</p></div>
+    </div>
+  </section>
+
+  <section class="note tilt-l" id="typing" aria-labelledby="h-typing">
+    <h2 id="h-typing">Typing commands</h2>
+    <p>Type a command and press <kbd>Enter</kbd>. The line under the box shows what you can type next; <kbd>Tab</kbd>
+    completes it (press it again for the next match). What it says is shown in green, mistakes in red.</p>
+    <div class="grid3">
+      <div class="card"><h3>Keyboard</h3><ul>
+        <li><kbd>Tab</kbd> complete a command or a name</li>
+        <li><kbd>&uarr;</kbd> <kbd>&darr;</kbd> earlier commands</li>
+        <li><kbd>&larr;</kbd> <kbd>&rarr;</kbd> <kbd>Home</kbd> <kbd>End</kbd> move in the line</li>
+        <li><kbd>PgUp</kbd> <kbd>PgDn</kbd> or the mouse wheel: scroll the text</li>
+        <li><kbd>Ctrl</kbd>+<kbd>V</kbd> paste, <kbd>Ctrl</kbd>+<kbd>U</kbd> clear the line</li></ul></div>
+      <div class="card"><h3>Controller</h3><ul>
+        <li><b>A</b>: the on-screen keyboard (Switch, Android); on Switch what you type runs when you press OK</li>
+        <li><b>X</b>: run the line, <b>Y</b>: complete it</li>
+        <li><b>D-pad &uarr; &darr;</b>: earlier commands (run one again with X), <b>&larr; &rarr;</b>: move</li>
+        <li><b>LB</b> / <b>RB</b> (L / R): scroll</li></ul></div>
+      <div class="card"><h3>Touch</h3><ul>
+        <li>Tap the screen: the phone's keyboard appears; its Enter runs the line</li>
+        <li>Three fingers again: close</li></ul></div>
+    </div>
+    <p class="tip">Your last 100 commands are kept in <code>saves/genesis_history.txt</code>: next time, <kbd>&uarr;</kbd> (or
+    the D-pad) brings them back, which makes it easy to repeat a set-up with a controller.</p>
+    <h3>Names</h3>
+    <p>Items, trinkets, cards, enemies and bosses can be written by their number or by name, in any case and without
+    punctuation: <code>give mom's knife</code>, <code>give moms knife</code> and <code>give 114</code> are the same. A part of the
+    name is enough when only one thing matches (<code>give knife</code>); if several do, the console lists them with their
+    numbers. <code>find &lt;text&gt;</code> searches everything.</p>
+  </section>
+
+  <section class="note" id="commands" aria-labelledby="h-commands">
+    <h2 id="h-commands">Commands</h2>
+    <div class="search"><label for="q-cmd">Filter</label><input id="q-cmd" type="search" data-table="t-cmd" placeholder="spawn, hp, god..." autocomplete="off"><span class="count" id="c-t-cmd"></span></div>
+    <div class="scroll"><table class="tbl" id="t-cmd">
+      <thead><tr><th scope="col">Command</th><th scope="col">What it does</th><th scope="col">Examples</th></tr></thead>
+      <tbody>
+        <tr><td class="cmd">give &lt;item&gt;<br><span class="soft">g</span></td><td>Gives you an item as if you had picked it up (with its name on screen and its effects).</td><td class="ex">give 7<br>give brimstone<br>g knife</td></tr>
+        <tr><td class="cmd">remove &lt;item&gt;<br><span class="soft">r</span></td><td>Takes one of that item away. What it gave once when picked up (hearts, pickups) stays.</td><td class="ex">remove 7</td></tr>
+        <tr><td class="cmd">spawn &lt;what&gt; [count]<br><span class="soft">s</span></td><td>Spawns next to you: an enemy or boss, a pickup, or <code>item</code>, <code>trinket</code>, <code>card</code>, <code>pill</code> + its name. Up to 20 at once. See <a href="#spawn">below</a>.</td><td class="ex">spawn gaper 3<br>spawn monstro<br>s soulheart 2<br>spawn item 105</td></tr>
+        <tr><td class="cmd">unlock</td><td>Unlocks everything (characters, items, chests... and The Gone with what he unlocks) until you close the game; it is not saved. Go back to the main menu to see it.</td><td class="ex">unlock</td></tr>
+        <tr><td class="cmd">kill<br><span class="soft">killall</span></td><td>Kills every enemy in the room.</td><td class="ex">kill</td></tr>
+        <tr><td class="cmd">god [on|off]</td><td>God mode: nothing hurts you. Devil deals still cost hearts. Without on/off it switches.</td><td class="ex">god</td></tr>
+        <tr><td class="cmd">doors [on|off]</td><td>Opens the room's doors now, as Dad's Key does. <code>doors on</code> keeps opening them in every room you enter, enemies or not.</td><td class="ex">doors<br>doors on</td></tr>
+        <tr><td class="cmd">goto &lt;room&gt;<br><span class="soft">tp</span></td><td>Teleports to a room of this floor (with the teleport animation). See <a href="#rooms">rooms</a>.</td><td class="ex">goto boss<br>tp devil</td></tr>
+        <tr><td class="cmd">stage &lt;floor&gt;</td><td>Goes to a floor by number or name. See <a href="#rooms">floors</a>.</td><td class="ex">stage 5<br>stage cellar 2<br>stage cathedral</td></tr>
+        <tr><td class="cmd">next</td><td>Goes down to the next floor.</td><td class="ex">next</td></tr>
+        <tr><td class="cmd">map</td><td>Shows the whole map of this floor, secret rooms included.</td><td class="ex">map</td></tr>
+        <tr><td class="cmd">hp &lt;hearts&gt;</td><td>Your red hearts, up to your heart containers (halves: <code>2.5</code>).</td><td class="ex">hp 2.5</td></tr>
+        <tr><td class="cmd">maxhp &lt;containers&gt;</td><td>Your heart containers (0-12).</td><td class="ex">maxhp 12</td></tr>
+        <tr><td class="cmd">soul &lt;hearts&gt;</td><td>Your soul hearts.</td><td class="ex">soul 3</td></tr>
+        <tr><td class="cmd">heal</td><td>Fills your red hearts.</td><td class="ex">heal</td></tr>
+        <tr><td class="cmd">coins / bombs / keys &lt;0-99&gt;</td><td>Sets how many you have.</td><td class="ex">coins 99<br>keys 5</td></tr>
+        <tr><td class="cmd">charge</td><td>Charges your active item.</td><td class="ex">charge</td></tr>
+        <tr><td class="cmd">speed &lt;n&gt; | reset</td><td>Fixes your speed (1 at the start), whatever your items say, until <code>reset</code>. 0.2-3.</td><td class="ex">speed 2</td></tr>
+        <tr><td class="cmd">tears &lt;n&gt; | reset</td><td>Fixes your tears: shots per second (2.73 at the start). 0.5-15.</td><td class="ex">tears 10</td></tr>
+        <tr><td class="cmd">damage &lt;n&gt; | reset</td><td>Fixes your damage (3.5 at the start). 0.1-500.</td><td class="ex">damage 50</td></tr>
+        <tr><td class="cmd">range &lt;n&gt; | reset</td><td>Fixes your range (6.5 at the start). 1-30.</td><td class="ex">range 15</td></tr>
+        <tr><td class="cmd">shotspeed &lt;n&gt; | reset</td><td>Fixes how fast your tears fly (1 at the start). 0.3-4.</td><td class="ex">shotspeed 1.5</td></tr>
+        <tr><td class="cmd">luck &lt;n&gt;</td><td>Sets your luck (Wrath of the Lamb and Eternal Edition; the original game has none).</td><td class="ex">luck 10</td></tr>
+        <tr><td class="cmd">stats</td><td>Your stats (* = fixed by the console), hearts and pickups, god mode and doors.</td><td class="ex">stats</td></tr>
+        <tr><td class="cmd">items</td><td>The items you have, with their numbers.</td><td class="ex">items</td></tr>
+        <tr><td class="cmd">find &lt;text&gt;</td><td>Searches items, trinkets, cards, enemies, bosses and pickups and shows their numbers.</td><td class="ex">find heart</td></tr>
+        <tr><td class="cmd">enemylist</td><td>Every enemy and boss the console knows by name, with its number.</td><td class="ex">enemylist</td></tr>
+        <tr><td class="cmd">help [command]<br><span class="soft">?</span></td><td>The list of commands, or how one works.</td><td class="ex">help spawn</td></tr>
+        <tr><td class="cmd">clear<br><span class="soft">cls</span></td><td>Clears the console.</td><td class="ex">clear</td></tr>
+        <tr><td class="cmd">close<br><span class="soft">exit</span></td><td>Closes the console.</td><td class="ex">close</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="note tilt-r" id="spawn" aria-labelledby="h-spawn">
+    <h2 id="h-spawn">What can be spawned</h2>
+    <ul>
+      <li><b>An enemy or a boss</b>, by name or number: <code>spawn pooter</code>, <code>spawn 14</code>, <code>spawn gurdy jr</code>.
+        Enemies appear a little away from you; bosses can be spawned in any room. A number with a decimal asks the game for a variant (<code>spawn 10.1</code>: the
+        game decides what the variant is for each monster; for most, a champion-like version).</li>
+      <li><b>A pickup</b> by its name: <code>spawn key</code>, <code>spawn soulheart 3</code> (<a href="#pickups">list</a>).</li>
+      <li><b>An item on a pedestal</b>: <code>spawn item &lt;item&gt;</code>. To have it straight away: <code>give</code>.</li>
+      <li><b>A trinket</b>: <code>spawn trinket &lt;name&gt;</code> (Wrath of the Lamb, Eternal Edition).</li>
+      <li><b>A card</b>: <code>spawn card &lt;name&gt;</code>, e.g. <code>spawn card fool</code>, <code>spawn card joker</code>.</li>
+      <li><b>A pill</b>: <code>spawn pill</code> (any colour) or <code>spawn pill 3</code> (colour 1-6). What each colour does
+        changes every run, as in the game.</li>
+    </ul>
+    <p class="soft">Adding a number at the end spawns several: <code>spawn gaper 5</code>, <code>spawn item 7 2</code>.</p>
+  </section>
+
+  <section class="note" id="enemies" aria-labelledby="h-enemies">
+    <h2 id="h-enemies">Enemies and bosses</h2>
+    <p class="soft">The numbers are the game's own (Rebirth kept them for the same monsters). <span class="tag ver">WotL+</span> only in
+    Wrath of the Lamb and Eternal Edition.</p>
+    <div class="search"><label for="q-en">Filter</label><input id="q-en" type="search" data-table="t-en" placeholder="name or number" autocomplete="off"><span class="count" id="c-t-en"></span></div>
+    <div class="scroll"><table class="tbl" id="t-en">
+      <thead><tr><th scope="col" class="num">#</th><th scope="col">Name</th><th scope="col">Command</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="note tilt-l" id="pickups" aria-labelledby="h-pickups">
+    <h2 id="h-pickups">Pickups</h2>
+    <div class="scroll"><table class="tbl" id="t-pick">
+      <thead><tr><th scope="col">spawn ...</th><th scope="col">What appears</th></tr></thead>
+      <tbody>
+        <tr><td class="cmd">heart</td><td>A red heart</td></tr>
+        <tr><td class="cmd">halfheart</td><td>Half a red heart</td></tr>
+        <tr><td class="cmd">soulheart</td><td>A soul heart</td></tr>
+        <tr><td class="cmd">eternalheart</td><td>An eternal heart <span class="tag ver">WotL+</span></td></tr>
+        <tr><td class="cmd">penny <span class="soft">or coin</span></td><td>A penny</td></tr>
+        <tr><td class="cmd">nickel</td><td>A nickel (5 coins)</td></tr>
+        <tr><td class="cmd">dime</td><td>A dime (10 coins) <span class="tag ver">WotL+</span></td></tr>
+        <tr><td class="cmd">key</td><td>A key</td></tr>
+        <tr><td class="cmd">goldenkey</td><td>A golden key <span class="tag ver">WotL+</span></td></tr>
+        <tr><td class="cmd">bomb</td><td>A bomb</td></tr>
+        <tr><td class="cmd">doublebomb</td><td>A double bomb</td></tr>
+        <tr><td class="cmd">trollbomb</td><td>A troll bomb (it explodes) <span class="tag ver">WotL+</span></td></tr>
+        <tr><td class="cmd">chest</td><td>A chest</td></tr>
+        <tr><td class="cmd">lockedchest</td><td>A golden chest (needs a key)</td></tr>
+        <tr><td class="cmd">slotmachine</td><td>A slot machine</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="note tilt-r" id="trinkets" aria-labelledby="h-trinkets">
+    <h2 id="h-trinkets">Trinkets and cards</h2>
+    <h3>Trinkets <span class="tag ver">WotL+</span></h3>
+    <p class="soft"><code>spawn trinket &lt;name or number&gt;</code>. Game Squid (34) only in Eternal Edition.</p>
+    <ol class="cols2" id="l-trinkets"></ol>
+    <h3>Cards</h3>
+    <p class="soft"><code>spawn card &lt;name or number&gt;</code>: <code>spawn card death</code>, <code>spawn card 2 of spades</code>,
+    <code>spawn card 11</code>. The playing cards are <span class="tag ver">WotL+</span>.</p>
+    <ul class="cols2" id="l-cards"></ul>
+    <h3>Items</h3>
+    <p>The item names are the ones the game shows when you pick them up. <code>find &lt;text&gt;</code> lists them with their
+    numbers (<code>find mom</code>), and <code>items</code> shows the ones you have. Tab completes them while you type.</p>
+  </section>
+
+  <section class="note" id="rooms" aria-labelledby="h-rooms">
+    <h2 id="h-rooms">Rooms and floors</h2>
+    <h3><code>goto &lt;room&gt;</code></h3>
+    <div class="scroll"><table class="tbl">
+      <thead><tr><th scope="col">Room</th><th scope="col"></th></tr></thead>
+      <tbody>
+        <tr><td class="cmd">start</td><td>The room where the floor starts</td></tr>
+        <tr><td class="cmd">boss</td><td>The boss room</td></tr>
+        <tr><td class="cmd">treasure, treasure2</td><td>The treasure room (and the second one, on floors that have two)</td></tr>
+        <tr><td class="cmd">shop</td><td>The shop</td></tr>
+        <tr><td class="cmd">secret, supersecret</td><td>The secret rooms</td></tr>
+        <tr><td class="cmd">miniboss</td><td>The mini-boss room</td></tr>
+        <tr><td class="cmd">arcade</td><td>The arcade</td></tr>
+        <tr><td class="cmd">library, curse, challenge, sacrifice</td><td>Those rooms <span class="tag ver">WotL+</span></td></tr>
+        <tr><td class="cmd">devil</td><td>The devil room</td></tr>
+        <tr><td class="cmd">angel</td><td>The angel room <span class="tag ver">WotL+</span></td></tr>
+        <tr><td class="cmd">error</td><td>The I AM ERROR room <span class="tag ver">WotL+</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="soft">If the floor doesn't have that room, the console says so. The console closes so you can watch the
+    teleport.</p>
+    <h3><code>stage &lt;floor&gt;</code></h3>
+    <div class="scroll"><table class="tbl">
+      <thead><tr><th scope="col" class="num">#</th><th scope="col">Floor</th><th scope="col">By name</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1, 2</td><td>Basement / Cellar</td><td class="cmd">stage basement 2, stage cellar</td></tr>
+        <tr><td class="num">3, 4</td><td>Caves / Catacombs</td><td class="cmd">stage caves, stage catacombs 2</td></tr>
+        <tr><td class="num">5, 6</td><td>Depths / Necropolis</td><td class="cmd">stage depths, stage necropolis</td></tr>
+        <tr><td class="num">7, 8</td><td>Womb / Utero</td><td class="cmd">stage womb 2, stage utero</td></tr>
+        <tr><td class="num">9</td><td>Sheol / Cathedral</td><td class="cmd">stage sheol, stage cathedral</td></tr>
+        <tr><td class="num">11</td><td>The Chest <span class="tag ver">WotL+</span></td><td class="cmd">stage chest</td></tr>
+      </tbody>
+    </table></div>
+    <p>With a number, the game picks the normal or the alternative floor as usual; add <code>alt</code> or
+    <code>normal</code> to choose (<code>stage 3 alt</code> = Catacombs). By name you get that floor. The alternative floors
+    and the Cathedral are <span class="tag ver">WotL+</span>; the original game has floors 1-9.</p>
+  </section>
+
+  <section class="note tilt-l" id="stats" aria-labelledby="h-stats">
+    <h2 id="h-stats">Stats</h2>
+    <p><code>speed</code>, <code>tears</code>, <code>damage</code>, <code>range</code> and <code>shotspeed</code> <b>fix</b> the stat:
+    items that would change it no longer do, until you write <code>reset</code> (<code>damage reset</code>). They last for the
+    rest of the session, through new runs; <code>stats</code> marks them with *, and the console's title bar lists them.
+    <code>luck</code> just sets your luck, which items keep changing as usual.</p>
+    <ul>
+      <li><b>tears</b> is in shots per second, like StatOn shows it (without the console, the game usually stops at 5).</li>
+      <li><b>damage</b> is the damage stat; items that multiply each tear's damage still do.</li>
+      <li><b>range</b> and <b>shotspeed</b> apply to the tears you fire from then on.</li>
+    </ul>
+    <p class="tip">With the <b>StatOn</b> mod on too, you see your stats on screen while you change them.</p>
+  </section>
+
+  <section class="note tilt-r" id="options" aria-labelledby="h-options">
+    <h2 id="h-options">Options</h2>
+    <p>In <code>mods/GenesisConsole.mod</code>, or in the mod manager:</p>
+    <div class="scroll"><table class="tbl">
+      <thead><tr><th scope="col">Option</th><th scope="col">Default</th><th scope="col"></th></tr></thead>
+      <tbody>
+        <tr><td class="cmd">key</td><td class="cmd">grave</td><td>The keyboard key that opens it: <code>grave</code> (the key above Tab) or a key name: <code>F1</code>, <code>F2</code>, <code>F4</code>...<code>F10</code>, <code>Insert</code>, <code>Home</code>... (F3, F11 and F12 are taken by the game).</td></tr>
+        <tr><td class="cmd">pause</td><td class="cmd">1</td><td><code>0</code>: the game goes on while the console is open.</td></tr>
+        <tr><td class="cmd">opacity</td><td class="cmd">85</td><td>How dark the console's background is, 30-100 (%).</td></tr>
+        <tr><td class="cmd">badge</td><td class="cmd">1</td><td><code>0</code> hides "GENESIS - NOT SAVED" during runs.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="note" id="notes" aria-labelledby="h-notes">
+    <h2 id="h-notes">Good to know</h2>
+    <ul>
+      <li>Everything the console does uses the game's own code: items given with <code>give</code> work exactly as if picked
+        up, teleports play the game's teleport, floors are made by the game.</li>
+      <li>Some things can't be undone by the console (an item's one-time effect, a floor already left). It's a sandbox:
+        nothing of it is saved anyway.</li>
+      <li>God mode, doors and fixed stats stay on through new runs until you turn them off or close the game.</li>
+      <li>Commands that act on the run don't work in the menus, during a cutscene or a boss's introduction: the console says
+        so.</li>
+      <li>Too many monsters at once (<code>spawn 20</code> of a boss...) can slow the game down, as it would in Flash.</li>
+      <li>To play normally again, turn the mod off in the mod manager (or remove <code>genesis</code> from <code>mods =</code> in
+        <code>isaac.ini</code>) and restart the game.</li>
+    </ul>
+  </section>
+
+  <footer>GenesisConsole is part of IsaacRecomp, the native version of The Binding of Isaac (Flash). This page works
+  offline.</footer>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  // [number, name, boss, only Wrath of the Lamb / Eternal] (rt/mod_genesis_enemies.inc)
+  var EN = [[10,'Gaper'],[11,'Gusher'],[12,'Horf'],[13,'Fly'],[14,'Pooter'],[15,'Clotty'],[16,'Mulligan'],[17,'Shopkeeper'],
+    [18,'Attack Fly'],[19,'Larry Jr.',1],[20,'Monstro',1],[21,'Maggot'],[22,'Hive'],[23,'Charger'],[24,'Globin'],[25,'Boom Fly'],
+    [26,'Maw'],[27,'Host'],[28,'Chub',1],[29,'Hopper'],[30,'Boil'],[31,'Spitty'],[32,'Brain'],[34,'Leaper'],[35,'Mr. Maw'],
+    [36,'Gurdy',1],[38,'Baby'],[39,'Vis'],[40,'Guts'],[41,'Knight'],[42,'Stone Grimace'],[43,'Monstro II',1],[44,'Poky'],
+    [45,'Mom',1],[46,'Sloth',1],[47,'Lust',1],[48,'Wrath',1],[49,'Gluttony',1],[50,'Greed',1],[51,'Envy',1],[52,'Pride',1],
+    [53,'Dople'],[54,'Flaming Hopper'],[55,'Leech'],[56,'Lump'],[57,'Membrain'],[58,'Para-Bite'],[59,'Fred'],[60,'Eye'],
+    [61,'Sucker'],[62,'Pin',1],[63,'Famine',1],[64,'Pestilence',1],[65,'War',1],[66,'Death',1],[67,'Duke of Flies',1],
+    [68,'Peep',1],[69,'Loki',1],[71,'Fistula',1],[72,'Fistula (medium)'],[73,'Fistula (small)'],[74,'Blastocyst',1],
+    [75,'Blastocyst (medium)'],[76,'Blastocyst (small)'],[77,'Embryo'],[78,"Mom's Heart",1],[79,'Gemini',1],[80,'Moter'],
+    [81,'The Fallen',1],[82,'Headless Horseman',1],[83,'Horseman Head',1],[84,'Satan',1],
+    [85,'Spider',0,1],[86,'Keeper',0,1],[87,'Gurgle',0,1],[88,'Walking Boil',0,1],[89,'Buttlicker',0,1],[90,'Hanger',0,1],
+    [91,'Swarmer',0,1],[92,'Heart',0,1],[93,'Mask',0,1],[94,'Big Spider',0,1],[96,'Eternal Fly',0,1],
+    [97,'Mask of Infamy',1,1],[98,'Heart of Infamy',1,1],[99,'Gurdy Jr.',1,1],[100,'Widow',1,1],[101,'Daddy Long Legs',1,1],[102,'Isaac',1,1]];
+  var TR = ['Fish Head','Pinky Eye','Push Pin','Liberty Cap','Umbilical Cord','Childs Heart','Curved Horn','Rusted Key','Goat Hoof',
+    'Moms Pearl','Cancer','Red Patch','Match Stick','Lucky Toe','Cursed Skull','Safety Cap','Ace of Spades','Isaacs Fork',
+    'The Polaroid','A Missing Page','Bloody Penny','Burnt Penny','Flat Penny','Counterfeit Penny','Tick','Isaacs Head',
+    'Maggys Faith',"Judas' Tongue","???'s Soul",'Samsons Lock','Cains Eye','Eves Bird Foot','The Left Hand','Game Squid'];
+  var CARDS = ['X Wheel of Fortune','XV The Devil','XIII Death','XI Strength','0 The Fool','I The Magician','IX The Hermit',
+    'XVIII The Moon','XII The Hanged Man','XX Judgement','VII The Chariot','VI The Lovers','XXI The World','VIII Justice',
+    'XIV Temperance','IV The Emperor','XVI The Tower','V The Hierophant','II The High Priestess','III The Empress','XIX The Sun',
+    'XVII The Stars'];
+  var PLAY = ['2 of Spades','2 of Clubs','2 of Hearts','2 of Diamonds','The Joker'];
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function cmdName(n) { return n.toLowerCase().replace(/[^a-z0-9 ]/g, ''); }
+  var tb = document.querySelector('#t-en tbody');
+  tb.innerHTML = EN.map(function (e) {
+    return '<tr><td class="num">' + e[0] + '</td><td>' + esc(e[1]) + (e[2] ? '<span class="tag boss">boss</span>' : '') +
+      (e[3] ? '<span class="tag ver">WotL+</span>' : '') + '</td><td class="cmd">spawn ' + esc(cmdName(e[1])) + '</td></tr>';
+  }).join('');
+  document.getElementById('l-trinkets').innerHTML = TR.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('');
+  document.getElementById('l-cards').innerHTML = CARDS.map(function (c, i) { return '<li><code>' + (7 + i) + '</code> ' + esc(c) + '</li>'; }).join('') +
+    PLAY.map(function (c, i) { return '<li><code>' + (70 + i) + '</code> ' + esc(c) + ' <span class="tag ver">WotL+</span></li>'; }).join('');
+  // filters
+  Array.prototype.forEach.call(document.querySelectorAll('.search input'), function (inp) {
+    var table = document.getElementById(inp.dataset.table), count = document.getElementById('c-' + inp.dataset.table);
+    function apply() {
+      var q = inp.value.trim().toLowerCase(), rows = table.tBodies[0].rows, shown = 0;
+      for (var i = 0; i < rows.length; i++) {
+        var hit = !q || rows[i].textContent.toLowerCase().indexOf(q) >= 0;
+        rows[i].classList.toggle('hidden', !hit); if (hit) shown++;
+      }
+      count.textContent = q ? shown + ' of ' + rows.length : rows.length + ' in all';
+    }
+    inp.addEventListener('input', apply); apply();
+  });
+})();
+</script>
+</body>
+</html>

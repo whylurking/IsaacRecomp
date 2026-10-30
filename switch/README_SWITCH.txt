@@ -139,7 +139,9 @@ save mods.txt and copy it to sd:/switch/isaac/mods/ (replacing the old one).
                   mode, a tap with three fingers opens / closes it too. Everything it can
                   do: tools/genesis_wiki.html. While it is on, NOTHING IS SAVED (no
                   unlocks, achievements or statistics; your save is left as it was).
-  WideSaac        no black bars at the sides of the screen; with Hyper Zoom
+                  Its "unlock" command unlocks everything until you close the game.
+  WideSaac        fill = 1: the game's background instead of black bars at the
+                  sides of the screen; with Hyper Zoom
                   (hyper_zoom = 1) the room fills the screen while you play, with the
                   hearts, active item, coins / bombs / keys on its right side. L3
                   (click the left stick; a four-finger tap in handheld mode) shows or
@@ -148,10 +150,12 @@ save mods.txt and copy it to sd:/switch/isaac/mods/ (replacing the old one).
                   the pickup banner and in a list on the pause screen.
   Itemnomicon    walk up to an item, trinket or card and a card over it shows its
                   name, the stats it changes and what it does.
-  BaseTime        speedrun timers (this floor, and the whole run with milliseconds);
+  BaseTime        speedrun timers (game time, and total time with milliseconds);
                   your last and best times on the main menu.
   The Gone        a new character (like Rebirth's The Lost) after the last one on the
-                  character select screen: no hearts, one hit and he dies.
+                  character select screen: no hearts, one hit and he dies. Unlock him
+                  by clearing three floors in a row without a hit or a heart; with him,
+                  Mom's Heart, Isaac and Satan unlock four new things of his own.
 
 IF SOMETHING GOES WRONG
 -----------------------

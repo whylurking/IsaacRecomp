@@ -544,8 +544,8 @@ frame clock, and turns the performance log on.
   version doesn't have is listed but not loaded. No scripting: a mod is code in the runtime plus a file that turns it
   on and carries its options.
 - The mods in the source tree's `mods/` are built in (CMakeLists.txt turns them into `build/gen_inc/mods_builtin.inc`)
-  and written into the mods folder the first time the program sees each one (`mods/installed.txt` lists them: a
-  deleted mod stays deleted, a new version's new mods appear). This is how Android gets them: the APK has no folder
+  and written into the mods folder the first time the program sees each one (a deleted mod stays deleted - see "v1.5:
+  closing round" -, a new version's new mods appear). This is how Android gets them: the APK has no folder
   to unpack. Folder listing / files go through `platformListDir` / `platformFopen` (UTF-8 paths on Windows).
   `warning` and `help` (a page in tools/) are only for the mod manager.
 - `modsTick()` runs on the logic thread after the frame's scripts and `recompPatchesTick()`, before the snapshot, in
@@ -762,7 +762,7 @@ frame clock, and turns the performance log on.
 - Built-in mods are updated in place: when the program's copy of a mod (`mods/*.mod`, built in) has a higher
   `version` than the file in the mods folder, the file is rewritten (`upgradeBuiltin`, mods.cpp), keeping the player's
   value of every option whose comment line above it is unchanged (an option that changed meaning - Itemnomicon's
-  `range`, now in tiles - gets the new default). A deleted mod stays deleted (installed.txt), as before.
+  `range`, now in tiles - gets the new default). A deleted mod stays deleted, as before.
 - Mod manager: an option whose comment reads `; key = a | b | c: ...` is a drop-down list; 0/1 options are tick boxes
   unless the comment gives a numeric range (`range = 0.5-4` with value 1).
 - The Gone: the original game only hurts a player with `hp > 0` (`if (lasth - fra < 0 && ... && player.hp > 0 ...)`
@@ -832,3 +832,117 @@ frame clock, and turns the performance log on.
   host game supports recording (needed when its setting is "enabled" rather than "automatic").
 - BaseTime: game time mm:ss, total time mm:ss:mmm; the menu shows the best game time and the last run's total time
   (mm:ss); `menu_time` is gone. Itemnomicon is back to its dark card (with the quality colour and "QUALITY n").
+
+## v1.5: closing round
+- Pause: `menuEscapeResumes()` (menuui.cpp): Escape / back while in a run, paused, with no options sheet open (or it
+  on its first frame), sends P (80) - the game's a-script only resumes on P; its own Escape handling showed the
+  "back to the main menu?" question.
+- "Who Am I?" with a controller (`padNavEvent`): on the menu sheet's `pos` 3 the ring (`cha`, or in the original the
+  clip with `i0` and `inc`) turns with left / right (sends 37 / 39); up / down move the focus among the buttons
+  outside the ring, sorted by height.
+- WideSaac: `fill` defaults to 0 (black bars). The renderer clips to the game area also while the view is easing
+  (the background showed for a moment between screens). `stretchShades` recurses to depth 3 and only skips the
+  inner `men` (the Delete Save / Exit Game dims live in `_root.men.ex` and `_root.pauss`); a rectangle counts as a
+  shade when it covers 85% of the stage. Hyper Zoom adds a view cut from the room's top edge up (`g_viewReq.cut`),
+  so the HUD band can't flash white above the room; with a cut the background quad is black. Soul hearts (heart
+  clip 609 frames 5+) have a 20%-alpha outline made for the dark HUD band: with Hyper Zoom each gets a black
+  silhouette of the red heart under it (`hud.lif.__soulback`, depth -16384, below the timeline children).
+- GenesisConsole: while it pauses the game, `recompMusicTick()` (patches.cpp) still runs `_root.soundfra`, so a song
+  that ends starts the next one. `unlock` sets indices 1-99 of `_root.locker` / `ulocker` (the same arrays as
+  `so.data.lock` / `ulock`; nothing is queued in `lockor`, so no achievement pop-ups) with the write guard off for
+  that object; nothing is flushed and `g_saveLocked` stays on, so it lasts only until the game is closed.
+- mods/installed.txt is gone: a built-in mod with no file whose id has a section in mods.txt was deleted by the
+  player and is not written again. An existing installed.txt is read once: its deleted mods get (empty) sections,
+  mods.txt is rewritten and installed.txt removed (`platformRemove`). Deleting mods.txt brings deleted built-in mods
+  back.
+- .mod files have two more lines for the mod manager: `category` (HUD, Screen, Characters, Cheats; others listed
+  after them) and `summary` (one line). The manager groups by category, shows the summary (the full description
+  under "More"), shows options only while a mod is on, and draws `key = a-b` options as sliders (step 0.1 when a
+  bound has decimals, 5 for spans over 20, else 1).
+- StatOn 1.1: `size` (1-5: scale 0.7 / 0.85 / 1 / 1.2 / 1.4, anchored at the top row) and `margin` (1-5: 10 px of the
+  stage further from the left edge each step). Itemnomicon 1.3: the line under the name is only "PASSIVE ITEM" /
+  "ACTIVE ITEM" and " - QUALITY n" (charges and "FOR SALE" made it too long for narrow cards).
+
+## v1.5: The Gone's unlocks
+- Runtime: `MovieClip::reqFrame` keeps the frame number last asked for (gotoFrame); a clip sent past its last frame
+  with a number >= 100 is listed in `g_overFrames` (an Array: it keeps them alive until the mod drops them).
+  `SnapOv` gained `hideKids` (the node's children are not emitted) and `extra` (a display object emitted as its last
+  child: mods draw detached clips, `newDetachedClip()`, that are on no display list). `g_soSaveHook` (builtins.cpp)
+  runs around every SharedObject flush, before / after serialising (The Gone takes its secret cards out of lockor).
+- mod_thegone_unlocks.inc (included by mod_thegone.cpp). New things get numbers past the game's: items 230 (The Void
+  Shard), 231 (Black Mirror; the game's short active number 231 - itn(231) = 191) and 232 (Nothing), card colour 120
+  (Negative Isaac), secret cards 150-154. The game's code does the rest: pools (`_root.ittt` treasure, `ittt7` devil:
+  added while unlocked and not seen this run), pedestals and prices (devil frame 9: 2 hearts / 3 soul hearts for
+  ???), pickup and banner (`st1` / `st2x` names), card drops (`tater` wrapped: 1 in 27), `tart` (the card's name).
+  Every clip sent to one of those numbers (past its sprite's last frame) is drawn with the mod's picture (hideKids +
+  extra), cached per clip; the HUD's active clip (`hud.it.d`, by short number) the same while `_root.it` is 191.
+  Floor cards (inside a pickup, `s` 5) get the cards' back (frame 7) and the pickup's red tint; held or in the HUD,
+  the face: a dark red card with the player's head drawing (learnt from `player.d.d.d.d`) in negative.
+- Black Mirror: `powerlevel` is wrapped; the game takes 231 as a passive (it isn't in its active list), so after its
+  pickup the mod does what the game's active branch does (the held active back on the pedestal, `_root.it` 191,
+  `itc` from `_root.iter`); `a.itc[191] = 3` (charges) on each room's copy. Used = `_root.itc` falls from full while
+  `_root.it` is 191: 210 ticks of a negative room (snapshot colour transform of `_root.a`) and each enemy pushed
+  towards the nearest other, hurting it (`hurt`, 5) every 8 ticks when they touch.
+- The Void Shard (`_root.ups[230]`): `playerhurt` wrapped: source 4 (enemy shots) skipped one time in four; after a
+  real hit, one in twenty: `hurt(e, 50)` for every enemy (done in the mod's tick, not inside the game's call).
+- Nothing (`ups[232]`): 3 ticks into each room, each enemy (`s` >= 10, not `bosser` / `aboss` / `boss` / `minb`, no
+  `worm` / `mags` parts) gets `done = true` one time in ten: the game's ball loop removes it with no death (no drop).
+- Negative Isaac used (`_root.pilc` goes from 120 to nothing): `a.playsave = 450` (Book of Shadows' shield, 300 in
+  the game: it ends with the room as the game's).
+- Progress: the floor streak counts a floor as clean until `playerhurt` returns true or a heart is picked up (the
+  existing `balljunk` wrapper: floor heart frame 1, shop frames 15 / 1, 5, 13, 17); counted when `_root.chaps` goes
+  up or an ending shows (root frames 9-40). Endings of a Gone run (by `_root.chaps` and `altchap`, as BaseTime):
+  Mom's Heart (card; Nothing too if `_root.cols` didn't grow and `_root.it` didn't change after the start), Isaac,
+  Satan. Unlocks are refused while `g_saveLocked` (GenesisConsole); its `unlock` sets session-only flags.
+- Locked: The Gone's portrait darkened with "LOCKED" (the row of another portrait's locked frame), his card with
+  "UNLOCKED BY" (Magdalene's locked card row) and three lines in the cards' lettering. Select is blocked by setting
+  `_root.skiner` to 99 while he is selected (the game's start buttons only accept known, unlocked characters); Random
+  skips him.
+- Unlock cards: `_root.unlll = 150 + n`, `_root.unl.gotoAndPlay(2)` when `unl` is idle (frame 1). The card's own
+  paper (the sprite clips of its first frame) is placed again, with the heading "YOU UNLOCKED" (the ink on the line
+  of the first card's first letter), the name between quotes and a line in the character cards' lettering, and a
+  picture. In the menus the cards are put at the front of `_root.lockor` (the found secrets) and taken out of
+  every save.
+- Collection: on the last page of `men.men.col`, after the game's last slot (the same row step as the last ten), a
+  "?" (slot frame 201) or the item; pointing at one sets the large picture (`itt`) and `ittz` after the game's code.
+- Itemnomicon describes them (`goneThingInfo`).
+- Not changed: Eternal Edition's empty pedestals can be pushed around: its pedestal code (`if (enfcheck(xp, yp, xpp,
+  ypp, 30)) { xp = xp * 0.3 + xpp * 0.7; ...; if (levzz(...) < 1) xpp = xp }`) moves a pedestal's home to where it
+  was pushed; Wrath of the Lamb and the original always put it back.
+- A tear is made at the room's origin and placed on the next tick; a very large one (high damage) showed its shadow
+  at the top left for that image. A room child at exactly (0, 0) with `d.sh` is hidden for that image
+  (mods.cpp `hideUnplacedTears`, always on).
+- WideSaac: the death screen's diary is scaled down with Hyper Zoom; its dimming (a child covering 85% of the stage)
+  gets the inverse matrix so it still covers everything. The menus (root frame 5) are always drawn uncut.
+- Floor pictures: an item clip inside a pickup (`s` 5) or the player (`s` 1, the held item) is the coloured sprite
+  (learnt there: `g_itemSprite`); any other (the collection, the pause screen's list, the death diary: the grey
+  drawings, `g_sketchSprite`, learnt from `men.men.col.i0`) gets the grey version: the shard in ink, Black Mirror as My
+  Reflection's drawing darkened (no negative). The HUD's Black Mirror uses the coloured sprite, inverted, as on its
+  pedestal. Negative Isaac is a playing card: `tater` returns 120 for 1 in 6 of its playing cards (70-74; the
+  original game, which has none, 1 in 23 of all), and its floor picture is the playing cards' red back (frame 70).
+- Collection: the controller can select the three slots (menuui `menuSetExtras`: a mod's extra options with their
+  stage rectangles, added after the topmost-layer filter, not under a dialog; selecting one moves the pointer there
+  as for buttons); pointing at one shows it (`itt`, `ittz`).
+- Black Mirror: every walking enemy (speed > 0.15) gets its whole velocity turned towards the nearest other enemy
+  (at least 1.6), every tick, so they stop going for the player; shots still aim at him.
+- The Gone: no D6 / The Dice (the game gives it to `_root.skiner` 0 when `locker[38]`, once per run by
+  `_root.wtfuuz`: set at his start, and `_root.it` cleared).
+- patches.cpp `charSelectGuard`: Select / Space check `_root.skiner`, which the ring sets on its own frame from
+  `cha.skiner`; pressing Select right after moving checked the previous character and started the new one. The pair
+  (`cha.skiner`, `_root.skiner`) is recorded when settled (unchanged since the last tick) while `pos` is 3, and put
+  back on every tick of `pos` 4 (the start), unless Random chose (`cha.done`). The Gone's mod keeps its own selection
+  as it was at that check.
+- main.cpp: getTimer() leaves out the time GenesisConsole kept the game paused (`pausedSec`). The game's fade
+  (`darky`) moves by the time since its last tick; the original game's clamp is broken (`f5 = 15` instead of `f1`),
+  so a long pause pushed `dark` far below 0 and the colour multiplier far above 1.
+- menuui: on "Who Am I?" the first selection is Select (the option outside the ring with the largest x + y); up / down
+  also reach Random (the ring's lowest button); the first up / down only shows the selection.
+- Black Mirror (revised): while it lasts, `aistuff` (the enemies' code) is wrapped and runs with `a.player` set to
+  one of the enemies (the target changes every second) - the game's own decoy mechanism (`rply` / `decer`) - so they
+  chase and shoot it instead of Isaac; their shots (`s` 9, 5+ ticks old) hurt an enemy they touch (3.5), and every enemy hurts each other one it touches (`hurt` 10, every 15 ticks), like contact with Isaac. Back to
+  normal when it ends or the room changes (a new `_root.a`).
+- The Gone: `giveit` is wrapped: an item whose only effect is health (15, 16, 22-26, 45, 92) is chosen again from the
+  same pool. At his start Isaac's D6 is also taken out of `ups` / `cols` (Replay gave it before the mod's tick).
+- Collection: the selected slot is drawn red (as the game's own); the large picture (`itt`) is set to its empty frame
+  and drawn by the mod, and its name (`ittz`) is pushed to its text field at once (`updateBoundTexts`: the game's update ran before) (its frames past 199 are other pictures: 230 was a soul heart). Original game: Negative
+  Isaac's floor picture is the plain tarot back. GenesisConsole lists "Negative Isaac" among the cards with The Gone on.
