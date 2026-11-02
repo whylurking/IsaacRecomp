@@ -41,6 +41,9 @@ void itemnomiconTick(const ModInfo& m);
 void basetimeTick(const ModInfo& m);
 void thegoneTick(const ModInfo& m);
 void rainbowTick(const ModInfo& m);
+void goodsaacTick(const ModInfo& m);
+void continuumTick(const ModInfo& m);
+void continuumDebug(const std::string& cmd);   // tests (script "eval continuum ..."): keys, state
 uint32_t modsRunSerial();   // goes up each time the game starts a new run (newstart(true): Replay, R held...)
 float itemnomiconShown();   // how visible Itemnomicon's card is (0-1; logic thread): WideSaac's Minimap+ fades under it
 // WideSaac's Hyper Zoom moves groups of HUD pieces: the move (in HUD coordinates) of a group this tick, if any

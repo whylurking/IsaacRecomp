@@ -42,6 +42,9 @@ static uint32_t g_bmClock = 0;   // (rasterTrim)
 static std::vector<uint32_t> g_bmTmpStore[64];
 
 static std::mutex g_bmMu, g_morphMu;   // caches shared with the raster threads
+// number of threads inside paintShape (they may hold pointers to the decoded SWF bitmaps): see rasterReleaseBitmaps
+static std::atomic<int> g_paintActive{0};
+struct PaintGuard { PaintGuard() { g_paintActive++; } ~PaintGuard() { g_paintActive--; } };
 static plutovg_surface_t* bitmapSurface(uint16_t id, const CX* cx) {
     std::lock_guard<std::mutex> lk(g_bmMu);
     BmKey k{id, cx ? *cx : CX()};
@@ -161,6 +164,7 @@ static void lineOne(plutovg_canvas_t* cv, const ShapeLayer& L, size_t i, const p
 }
 
 void paintShape(plutovg_canvas_t* cv, const ShapeDef* s, const Mat& m, const CX* cx) {
+    PaintGuard paintGuard;
     shapeEnsure(const_cast<ShapeDef*>(s));
     plutovg_matrix_t pmm = pm(m);
     double sc = std::max(1e-6, matScale(m));
@@ -344,9 +348,35 @@ void paintContentSrc(plutovg_canvas_t* cv, const RasterSrc& s, const Mat& m, con
 bool contentBounds(DisplayObject* d, RectF& b) { return contentBoundsSrc(rasterSrcOf(d), b); }
 void paintContent(plutovg_canvas_t* cv, DisplayObject* d, const Mat& m, const CX* cx) { paintContentSrc(cv, rasterSrcOf(d), m, cx); }
 
-bool rasterizeSrc(const RasterSrc& src, double scale, Raster& out) {
+// Frees the decoded SWF bitmaps a shape uses (a 3000x3000 bitmap is 36 MB) when no thread is painting: they are decoded again
+// if something needs them. Safe because a painting thread is counted in g_paintActive from before it asks for a surface
+// until it has finished with it, and the surface is only handed out under g_bmMu.
+static void rasterReleaseBitmaps(const ShapeDef* s) {
+    std::lock_guard<std::mutex> lk(g_bmMu);
+    if (g_paintActive.load() != 0) return;
+    for (const ShapeLayer& L : s->layers) for (const FillStyle& f : L.fills) {
+        if (f.type < 0x40 || f.type > 0x43) continue;
+        for (auto it = g_bmSurf.begin(); it != g_bmSurf.end();) {
+            if (it->first.id == f.bitmapId) { plutovg_surface_destroy(it->second.s); it = g_bmSurf.erase(it); } else ++it;
+        }
+        if (CharDef* cd = g_movie.get(f.bitmapId)) if (cd->type == CH_BITMAP) { BitmapDef* bd = (BitmapDef*)cd; std::vector<uint32_t>().swap(bd->px); bd->decoded = false; }
+    }
+}
+
+static bool rasterizeSrcImpl(const RasterSrc& src, double scale, Raster& out, bool allowFrame) {
     RectF b;
     if (!contentBoundsSrc(src, b) || !b.valid()) return false;
+    // A frame graphic: the game's border overlay is a 3000x3000 bitmap-filled shape centred on the stage, made to cover any
+    // monitor of the Flash player's fullscreen; only a window-sized part of it is ever visible. Rasterizing the whole shape
+    // took 25 MB of pixels (plus the same in the texture) and half a second on a handheld. Only the middle is rasterized
+    // (enough for windows up to about 21:9 or 9:16 around the 4:3 stage); the rest is one flat colour. ISAAC_NOFRAMECROP=1: off.
+    const RectF full = b; bool frameCrop = false;
+    static const bool noFrame = getenv("ISAAC_NOFRAMECROP") != nullptr;
+    if (allowFrame && !noFrame && src.kind == OK_SHAPE && b.x1 - b.x0 >= 2000 && b.y1 - b.y0 >= 2000 && b.x0 <= 0 && b.x1 >= 0 && b.y0 <= 0 && b.y1 >= 0) {
+        const double R = 640;
+        b.x0 = std::max(b.x0, -R); b.y0 = std::max(b.y0, -R); b.x1 = std::min(b.x1, R); b.y1 = std::min(b.y1, R);
+        frameCrop = true;
+    }
     double pad = 2.0 / scale;
     b.x0 -= pad; b.y0 -= pad; b.x1 += pad; b.y1 += pad;
     int w = (int)std::ceil((b.x1 - b.x0) * scale), h = (int)std::ceil((b.y1 - b.y0) * scale);
@@ -354,8 +384,12 @@ bool rasterizeSrc(const RasterSrc& src, double scale, Raster& out) {
 #ifdef __PSP__
     const int MAXT = 512;    // (the GE's largest texture, an atlas page: bigger ones are rasterized smaller and scaled up)
 #else
-    const int MAXT = 4096;
+    // (reduced-memory profile: a huge zoom - an explosion's flash, a boss's death - would need up to 64 MB for its pixels, as much
+    // again for the texture and the upload staging, several at once on the rasterizer threads: it killed the game on a 1 GB
+    // handheld. Bigger ones are rasterized smaller and scaled up.)
+    const int MAXT = g_lim.small ? 1536 : 4096;
 #endif
+    if (w * (long)h > 2000000) logf("[raster] big graphic %dx%d (%.0f MB of pixels) at scale %.2f, limit %d\n", w, h, w * (double)h * 4 / 1048576.0, scale, MAXT);
     if (w > MAXT || h > MAXT) { double f = std::min((double)MAXT / w, (double)MAXT / h); scale *= f; w = std::min(MAXT, (int)std::ceil((b.x1 - b.x0) * scale)); h = std::min(MAXT, (int)std::ceil((b.y1 - b.y0) * scale)); }
     out.w = w; out.h = h; out.x0 = b.x0; out.y0 = b.y0; out.scale = scale;
     out.px.assign((size_t)w * h, 0);
@@ -366,7 +400,53 @@ bool rasterizeSrc(const RasterSrc& src, double scale, Raster& out) {
     paintContentSrc(cv, src, m, nullptr);
     g_frontToBack = false;
     plutovg_canvas_destroy(cv); plutovg_surface_destroy(s);
+    if (frameCrop) {
+        // the flat colour for the rest: the mean of the raster's border pixels (premultiplied)
+        uint64_t sa = 0, sr = 0, sg = 0, sb = 0, n = 0;
+        auto add = [&](int x, int y) { uint32_t p = pxToArgb(out.px[(size_t)y * w + x]); sa += p >> 24; sr += (p >> 16) & 255; sg += (p >> 8) & 255; sb += p & 255; n++; };
+        for (int x = 0; x < w; x++) { add(x, 0); add(x, h - 1); }
+        for (int y = 1; y < h - 1; y++) { add(0, y); add(w - 1, y); }
+        if (n) {
+            out.frame = true; out.fill = pxFromArgb((uint32_t)(sa / n) << 24 | (uint32_t)(sr / n) << 16 | (uint32_t)(sg / n) << 8 | (uint32_t)(sb / n));
+            out.fx0 = full.x0; out.fy0 = full.y0; out.fx1 = full.x1; out.fy1 = full.y1;
+        }
+        if (g_lim.small) rasterReleaseBitmaps((const ShapeDef*)src.def);   // (reduced-memory profile only: 36 MB back)
+    }
     return true;
+}
+bool rasterizeSrc(const RasterSrc& src, double scale, Raster& out) { return rasterizeSrcImpl(src, scale, out, true); }
+// (test, ISAAC_FRAMETEST=1 with --headless) the cropped raster of every frame-like shape must equal the same part of the whole raster
+void rasterFrameSelfTest() {
+    for (size_t id = 0; id < g_movie.chars.size(); id++) {
+        CharDef* cd = g_movie.chars[id]; if (!cd || cd->type != CH_SHAPE) continue;
+        RasterSrc src; src.kind = OK_SHAPE; src.def = cd; RectF bb;
+        if (!contentBoundsSrc(src, bb) || bb.x1 - bb.x0 < 2000 || bb.y1 - bb.y0 < 2000) continue;
+        for (double sc : {0.5, 0.84, 1.0}) {
+            Raster whole, crop;
+            double t0 = SDL_GetPerformanceCounter(); bool a = rasterizeSrcImpl(src, sc, whole, false); double t1 = SDL_GetPerformanceCounter(); bool c = rasterizeSrcImpl(src, sc, crop, true); double t2 = SDL_GetPerformanceCounter();
+            double f = SDL_GetPerformanceFrequency();
+            if (!a || !c) { fprintf(stderr, "[frametest] char %zu scale %.2f: raster failed\n", id, sc); continue; }
+            // offset of the crop inside the whole raster (both may have been scaled down to the size limit: compare only when the scale is the same)
+            if (whole.scale != crop.scale) { fprintf(stderr, "[frametest] char %zu scale %.2f: whole raster was scaled down (%.3f vs %.3f), %dx%d vs %dx%d: skipped\n", id, sc, whole.scale, crop.scale, whole.w, whole.h, crop.w, crop.h); continue; }
+            double dx = (crop.x0 - whole.x0) * sc, dy = (crop.y0 - whole.y0) * sc;
+            int ox = (int)std::lround(dx), oy = (int)std::lround(dy); long bad = 0, maxd = 0;
+            for (int y = 0; y < crop.h; y++) for (int x = 0; x < crop.w; x++) {
+                int wx = x + ox, wy = y + oy; if (wx < 0 || wy < 0 || wx >= whole.w || wy >= whole.h) continue;
+                uint32_t p = crop.px[(size_t)y * crop.w + x], q = whole.px[(size_t)wy * whole.w + wx];
+                for (int s = 0; s < 32; s += 8) { long d = std::labs((long)((p >> s) & 255) - (long)((q >> s) & 255)); maxd = std::max(maxd, d); if (d > 2) { bad++; break; } }
+            }
+            // flat colour vs the whole raster's pixels outside the crop
+            uint64_t sa = 0, sr = 0, sg = 0, sb = 0, n = 0;
+            for (int y = 0; y < whole.h; y += 4) for (int x = 0; x < whole.w; x += 4) {
+                if (x >= ox && x < ox + crop.w && y >= oy && y < oy + crop.h) continue;
+                uint32_t p = whole.px[(size_t)y * whole.w + x]; sa += p >> 24; sr += (p >> 16) & 255; sg += (p >> 8) & 255; sb += p & 255; n++;
+            }
+            uint32_t fl = crop.fill;
+            fprintf(stderr, "[frametest] char %zu scale %.2f: whole %dx%d (%.0f ms), crop %dx%d (%.0f ms), offset %d,%d, %ld pixels differ (max channel diff %ld), frame=%d fill %08x vs outside mean a%llu r%llu g%llu b%llu\n",
+                    id, sc, whole.w, whole.h, (t1 - t0) * 1000 / f, crop.w, crop.h, (t2 - t1) * 1000 / f, ox, oy, bad, maxd, crop.frame ? 1 : 0, fl,
+                    (unsigned long long)(n ? sa / n : 0), (unsigned long long)(n ? sr / n : 0), (unsigned long long)(n ? sg / n : 0), (unsigned long long)(n ? sb / n : 0));
+        }
+    }
 }
 bool rasterize(DisplayObject* d, double scale, Raster& out) { return rasterizeSrc(rasterSrcOf(d), scale, out); }
 

@@ -906,9 +906,11 @@ frame clock, and turns the performance log on.
 - Collection: on the last page of `men.men.col`, after the game's last slot (the same row step as the last ten), a
   "?" (slot frame 201) or the item; pointing at one sets the large picture (`itt`) and `ittz` after the game's code.
 - Itemnomicon describes them (`goneThingInfo`).
-- Not changed: Eternal Edition's empty pedestals can be pushed around: its pedestal code (`if (enfcheck(xp, yp, xpp,
-  ypp, 30)) { xp = xp * 0.3 + xpp * 0.7; ...; if (levzz(...) < 1) xpp = xp }`) moves a pedestal's home to where it
-  was pushed; Wrath of the Lamb and the original always put it back.
+- Eternal Edition's pedestal code (`if (enfcheck(xp, yp, xpp, ypp, 30)) { xp = xp * 0.3 + xpp * 0.7; ...; if
+  (levzz(...) < 1) xpp = xp }`) moves a pedestal's home to where it was pushed, and in the recomp an empty pedestal
+  could be pushed across the room; in the Flash game it stays put (reported from the real game; the generated code
+  matches the bytecode, so the difference is upstream, in the collision: not found). v1.6: patches.cpp
+  `eternalPedestals` keeps each frame-10 pedestal's first home in the room (a change under 60 px is undone).
 - A tear is made at the room's origin and placed on the next tick; a very large one (high damage) showed its shadow
   at the top left for that image. A room child at exactly (0, 0) with `d.sh` is hidden for that image
   (mods.cpp `hideUnplacedTears`, always on).
@@ -946,3 +948,142 @@ frame clock, and turns the performance log on.
 - Collection: the selected slot is drawn red (as the game's own); the large picture (`itt`) is set to its empty frame
   and drawn by the mod, and its name (`ittz`) is pushed to its text field at once (`updateBoundTexts`: the game's update ran before) (its frames past 199 are other pictures: 230 was a soul heart). Original game: Negative
   Isaac's floor picture is the plain tarot back. GenesisConsole lists "Negative Isaac" among the cards with The Gone on.
+
+## v1.6: Good Saac (`mod_goodsaac.cpp`, engine `goodsaac`)
+Bug fixes for the Flash games, chosen from the community's bug lists (Fandom "Wrath of the Lamb/Bugs") and checked
+against the decompiled code; most are what Eternal Edition changed later (diff of the three games' scripts):
+- `subtitles` (og, wotl): `_root.st2x` (the pickup banner's second line) for 14 items is set to Eternal's text. The
+  items' code is the same in WotL and Eternal (e.g. ups[182] Sacred Heart: homing + damage; ups[193] MEAT!: damage +
+  HP; ups[194] Magic 8 Ball: shot speed), so Eternal's lines are the right ones; OG gets those of its 132 items.
+- `names` (og, wotl): `st11` wrapped: "Magdalena vs " -> "Magdalene vs ", "XXX vs " -> "??? vs " (Eternal's arrays).
+- `eternal_heart` (og, wotl): playerhurt's death test is `hp <= 0 && armor <= 0 || !(mhp > 0 || armor > 0)`;
+  Eternal's adds `&& !eta` / `|| eta`. The wrapper (called after the original) undoes a death that only the old test
+  gave: `player.dones = false`, `player.d` frame 2 (the hit's animation, as the else branch). Not for f3 hits.
+- `mom_voice` (og, wotl): Mom's Heart's `else if (frame == 5 or momstate == 3)` runs every image of the out animation
+  once momstate is 3 (Eternal: `frame == 5` and then `fire < 40 || momstate == 3`); `_root.soundy` is wrapped and
+  "Mom_Vox_Filtered_Isaac_*" / "heartout.wav" play at most once every 30 ticks. The logic is unchanged.
+- `challenge_music` (all): `_root.amusic` is cleared when a room starts; the root music code fades only when `amas`,
+  which is set for amusic rooms other than the challenge room (`_root.lev != chamb`). Leaving the challenge room
+  other than through its door (bossmusic handles that) kept m6 / m27 playing. Fade when the music is m6-* / m27-*
+  and none of amusic, bossmusic, amas, fade is set.
+- Pedestals (Eternal) are no longer a Good Saac option: always on, in patches.cpp (`eternalPedestals`).
+- Not fixed (looked at): the Treasure Map / Compass minimap (already redrawn on pickup, `mapd()`), Dead Sea Scrolls,
+  sound-less items, unlock pop-ups (Steam/FlashAchievements matters), the many crashes/softlocks of the wiki's list
+  that depend on the Flash player or on room generation.
+- Wrapping a game function is shared (`mod_hook.h`: `hookGameFn` / `callGameOrig`): a wrapper isn't put on again when
+  it is already in the chain of wrappers on that object, so The Gone and Good Saac can both wrap `playerhurt` (before,
+  each mod re-wrapped whatever wasn't its own wrapper: two mods would have called each other forever).
+
+## v1.6: touch, lost finger lifts
+- `TouchControls::prune` (every frame, Android / real touch only, not with ISAAC_TOUCH_INJECT): a stick or HUD
+  button whose finger is not in SDL's list of fingers on the screen (`SDL_GetTouchFinger`) is let go. Finger-up
+  events can be eaten before the touch controls (GenesisConsole open, the 3/4-finger gestures).
+- `update`: any move / shoot key with a reference but no stick finger wanting it (and no HUD hold) is released; and
+  when play resumes, every stick key no finger holds is sent up again.
+
+### Good Saac 1.1: the bug list, one by one
+A list of ~80 reported Flash bugs was checked against the decompiled scripts of the three games. Fixed (options in
+`mod_goodsaac.cpp`'s header): heart_name, last_will, shop_pills, challenge_pause, mom_red, foot_shadow, gamekid_head,
+daddy_stomps, unlocks (Headless Horseman / Chest ??? and Eve), xl_depths, forget_me_now, secrets_keys, select_click,
+plus the v1.6.0 ones. Findings worth keeping:
+- Death diary (`hud.paus.kill`, 203 frames): empty frames 2, 3, 9, 33, 37, 70, 95, 103-199, 202 (OG also 85-102).
+  202 is the Razor Blade's only source (`playerhurt(0.5, 202)`); empty enemy frames are what "killed by nothing" is.
+  The diary's item list (`paus.i0`..) uses the grey item sprite: the Razor Blade drawing comes from it (frame 126).
+- `<3`: the collection's name field (`men.men.ittz`, EditText with the HTML flag) drops it; the pickup banner's is not
+  HTML and shows it. After setting `ittz`, `updateBoundTexts()` (the game's own update already ran).
+- Shop pills: a shop slot's picture is `d.d.d` frame `col`, the same sprite as a floor pill's `p` (frames 1-6 and
+  101-103); floor / HUD / use go through `pic(col)` (`_root.picers`, WotL/Eternal only).
+- Challenge waves: `if (chama) {...}` runs every tick, paused or not, and while paused no enemy counts (`shutdoor`
+  stays 0): `chamb` reaches 50 every 20 ticks. Tested: paused, chama went 2 -> 5.
+- Mom's flash: `colorit(_root, ...)` while `momdown` counts (also set for Satan); a new `_root.a` never resets it.
+- The Gamekid: `pacoo`, which would put the head's `_xscale` back, is never set true in any of the three games.
+- Daddy Longlegs: stomps start inside the `whaf` branch (target farther than 20 px); tested on Gurdy: 1 stomp in 700
+  ticks without the fix, 6 with it.
+- Unlocks: `locker` index -> what it unlocks is in the pool code (`locker[n]` -> `ittt*.push` / `junxx.push`; trinket
+  t is name `t - 29` of the trinket names). `_root.lox` (challenges) is right (2 -> 78 Lucky Toe, 3 -> 77 Burnt
+  Penny); `acnam` (Steam achievement names) is shifted there, but the recomp has no Steam achievements. bosssp's
+  Chest table `f10 = [91,92,96,93,97,94,95]` gives ??? 97 (Eve's Bird Foot) and Eve 94 (???'s Soul). giveit's
+  `bosss == 22` (Headless Horseman) branch sets `locker[32]` (Little Chad) like C.H.A.D.'s.
+- XL Depths: the first boss is in `bossl2` (`bosss` becomes `bosss2` when it dies); bosssp's test
+  `chaps != 6 || locker[4] && (chala > 4 || chala == 0)` sends it to Mom's branch: no item, challenge reward.
+  bosssp runs once per room (`nobob`, `trg.firsttx`).
+- Forget Me Now (`shroom = 3`, `chaps - 1`, `newstart(false)`): the floor is made again with `altchap = 9` only if
+  `heaven == 2`, which every room of chaps 9 clears. Wrapping `newstart` is avoided (mods.cpp wraps it with its own
+  wrapper, not a GameHook: two wrappers that don't know each other would re-wrap forever); `moveon` is wrapped.
+- Secrets screen: buttons 7197/7198 have `on(release, keyPress <Left>/<Right>)` doing `ax--/++`, and the sheet's
+  onEnterFrame does it too on `Key.isDown`. Eternal's buttons have no keyPress. OG the same as WotL.
+- Not bugs here: the Treasure Map / Compass minimap (`mapd()` on pickup in all three), the Ultra Pride pop-up (shown
+  once: `ulocker` is saved as `so.data.ulock`), duplicate trinkets with Mom's Purse (`trixx(f2)` refuses a held one; a
+  copy would do nothing), the Womb's freeze and brightness (the Flash player; not in the recomp).
+- Not fixed (enemy AI, room generation, or not reproducible without much more work): see the reply that came with
+  1.1; among them the pits trap, Monstro / War / B. Licker walls, The Chest teleports, Joker in The Chest, Tech 2
+  and Brimstone combinations, familiars turning into Brother Bobby, Ankh / Dead Cat in challenges.
+
+### Good Saac 1.2: deals after Mom, Breakfast
+- `mom_deals` (all): the room-clear roll in Mom's room (bossl) sets `_root.devil = 2` and opens the deal door
+  (`sat`, made visible by golev for that room), but Mom's parts snap to the door holes and set `door._visible =
+  false`, the deal's hole too, and the roll only opens `levz[blo]` for visible doors: so deals did appear on Depths 2,
+  behind a hidden, closed door. `momDealsTick`: in bossl, with `devil == 2`, the room open (`keyo`) and `momdown > 0`,
+  each `a.door` with `sat` that is hidden is shown and its tile opened (`levz[blo] = clevc[blo] = 0`). Tested: the
+  door shows and leads to room 166.
+- Womb 2's deals "always lead to Sheol": not reproduced. With It Lives! unlocked (wins 12), a devil room forced
+  after Mom's Heart, going in and back: the beam (frame 34, `d.d` 5) and the trapdoor are both still there, and
+  `heaven` stays true. Nothing changed.
+- `breakfast` (all): with every item owned (Dice + Habit + Scapular rerolls...) `giveit()` loops on `itz()` forever
+  (vanilla froze in the three games). `itz` is wrapped while giveit runs (`g_giveDepth`): after 600 tries it returns
+  25 (Breakfast, an HP up), as Rebirth does.
+
+## v1.6: from HellRok's fork (RG CubeXX)
+HellRok's fork (github.com/HellRok/IsaacRecomp) ported the recomp to the RG CubeXX (Linux, OpenGL ES, little
+memory). Taken, with credit in the code (`(from HellRok's RG CubeXX fork)`):
+- `ebac9fe`: GL context fallback (desktop GL, then GLES 3.0 / 2.0) and GLES detection in `renderInit`; Linux links
+  `${CMAKE_DL_LIBS} rt`.
+- `1798f4c`: `makeStencilFbo`: on GLES, layers and filter targets use a stencil-only renderbuffer (`STENCIL_INDEX8`,
+  with the old depth-stencil as a fallback).
+- `fc6dbd2`: `render_height` on PC / Linux (it was Android-only): the game draws into an offscreen base FBO of that
+  height (`renderSetOutput`) and `renderEndFrame` scales it up to the window; screenshots use the output size. 0
+  (default) is unchanged. Hunk #2 of the patch depended on a skipped commit: `renderSizeFor` in main.cpp was added
+  by hand (preload and the render loop; headless is unchanged).
+- `201124f`, `448ed88`: on the reduced-memory profile only (`g_lim.small`), a rasterized graphic is capped at 1536
+  px a side (4096 otherwise) and atlas pages are 1024 px (4 MB) instead of 2048; the bitmap release
+  (`rasterReleaseBitmaps`) runs only there too.
+- `30d95b1`: frame-like shapes (>= 2000 units, containing the origin: the 3000x3000 border overlay) are rasterized
+  only in their middle (+-640 units around the stage) and the rest is filled with plain quads (`TexEntry.frame/fill`,
+  `rasterFrameSelfTest`). Less memory and time, and the overlay is sharper. Checked against the old binary at
+  1920x1080, 2520x1080 and 1080x1920: only the stage edges differ (max 30 levels).
+- `PaintGuard` (`g_paintActive`) around rasterization, from the same commits.
+Not taken: `e879344` (memory logging every 5 s and periodic `malloc_trim`: diagnostics for that device),
+`d8afacb` (frees GPU caches when RSS nears 500 MB: a workaround for that device's OOM killer, and the caches are
+then made again, which costs frames), `200800f` (`raster_flags.txt`, a diagnostic tool). The NOTES and diagnostics
+lines that depended on them were left out. Game logic is untouched by all of this (same eval output as before).
+
+## v1.6: Continuum (`mod_continuum.cpp`, engine `continuum`)
+Rebirth's "continue": leave a run from the pause screen and come back to it.
+- The confirm note is `hud.paus` frame 6. Its "Yes" is a button that also answers to Enter (key code 13); "No" is
+  no button of its own: the full-screen button under the note (it answers to Escape, code 19) goes back to frame 2
+  (the pause screen) wherever it is clicked. Continuum's "No" is a click on that button where the word is drawn: to
+  the right of "Yes" (`onNoWord`: from Yes.x1 + 0.6 w to Yes.x1 + 1.9 w, Yes's height +- 25 %; the same layout in the
+  three games). `display.cpp` calls `g_buttonReleaseHook` before a button's release actions (true: taken); the
+  controller's A on the note's "No" (menuui's focus there) counts too, its B does not (`g_menuNavClick`: 0 mouse,
+  1 A, 2 B). Anywhere else, Escape and B: back to the pause screen as before.
+- Only in a clear room: `a.shutdoor == 0 && a.ashut == 0` (the enemies that close the doors, counted every image),
+  `fra > 30`, no game over. Otherwise "No" is the old one.
+- Saving: every variable of `_root` that is a number, string, boolean, array or plain object (recursively; shared
+  objects and cycles kept with references; arrays' for-in order `ord` kept), except the program's: those that
+  existed when the main menu first showed (options, the save `so`, the unlocks `locker`, the item tables `st1`...),
+  the menus' and fades', and scratch names (`f1`, `v2`, `e`, `z`). A variable holding anything else (a clip, a
+  bitmap) is left out whole. ~160 variables, ~4.5 KB in WotL. Then what "Yes" does: `levz = undefined`, `moveon()`,
+  `door = undefined`, `gotoAndStop("menu")`. The game writes the room's state into `_root` every image (`levit` items
+  on the floor, `levsav`, `levcol`, `beenlev`...) and `_root.hp` / `mhp` from the player, so nothing else is needed.
+- Resuming: on the title, the press that opens the character select (`men.men.pos` undefined -> 3) with a save:
+  `chala = undefined; darky(150)` (the character select's Start), then the saved variables are put back over
+  `_root` in the same tick (darky sets `chaps = 1`, `intro`...). The game's frame then finds `_root.levz` (no new
+  floor) and builds room `lev` like after a door, with `door = undefined` (no slide-in) and `playerx / playery` the
+  spawn point. The file is removed. Checked: the variables after resuming equal those saved (except the spawn).
+- Spawn: the centre tile (320, 280) if `a.levz` is 0 there and nothing of `a.ball` (pedestal, trapdoor, chest,
+  pickup...) is within 32 px; otherwise the free tile of the room (x 2-14, y 4-10) nearest to `_root.playerx /
+  playery` as the player came in (next to that door; 320, 400 after a teleport). Worked out when saving.
+- Other mods: The Gone (`goneResume`: its run goes on without giving his items again) and BaseTime
+  (`basetimeSuspend` / `basetimeResume`: the clocks are not recorded as a finished run, and go on from where they
+  were; the time in the menu doesn't count).
+- Tests: `eval continuum keys` (what would be saved), `dump <file>`, `state`, `dialog`; `ISAAC_CONT_LOG=1`.

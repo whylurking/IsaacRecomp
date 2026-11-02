@@ -158,6 +158,11 @@ static void loadConfig(const std::string& path, Config& c) {
              "; touch_controls = 0 turns off the touch joysticks, HUD taps and pause button (touch then only works in menus)\n"
              "touch_controls = 1\n"
 #endif
+#if !defined(__ANDROID__) && !defined(__SWITCH__)
+             "; render_height = 0 renders at the window's resolution. Lower it (e.g. 540 on a 720p screen) to draw at a smaller\n"
+             ";   size and scale up: faster on weak GPUs and uses less memory, a bit softer (minimum 240)\n"
+             "render_height = 0\n"
+#endif
 #ifdef __ANDROID__
              "; render_height = 0 picks the resolution automatically (starts at 720 and goes down if the device can't keep\n"
              ";   60 fps); or force one: 1080 (or the screen's: sharpest), 720, 600, 540, 480 (fastest)\n"
@@ -439,6 +444,20 @@ static int chooseGame(SDL_Window* win, size_t n, const std::function<std::string
     }
 }
 
+// the size to render at: the window's, or (render_height on desktop/handhelds) a smaller one scaled up at the end of the frame
+// (from HellRok's RG CubeXX fork)
+static void renderSizeFor(SDL_Window* win, int renderHeight, int& dw, int& dh) {
+    SDL_GL_GetDrawableSize(win, &dw, &dh);
+#if !defined(__ANDROID__)
+    if (renderHeight >= 240 && renderHeight < dh) {
+        int fw = dw, fh = dh;
+        dw = std::max(2, (int)std::lround(fw * (double)renderHeight / fh)); dh = renderHeight;
+        fl::renderSetOutput(fw, fh);
+        return;
+    }
+#endif
+    fl::renderSetOutput(0, 0);
+}
 int main(int argc, char** argv) {
     fl::platformInitLimits();
     Config cfg;
@@ -687,6 +706,16 @@ int main(int argc, char** argv) {
         if (!headless) { SDL_PumpEvents(); fitWindow(win, cfg.width, cfg.height); }
 #endif
         gl = SDL_GL_CreateContext(win);
+        if (!gl && !g_glES) {   // no desktop GL 3.3 (many handhelds): try OpenGL ES 3.0
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+            gl = SDL_GL_CreateContext(win);
+            if (gl) g_glES = true;
+        }
+        if (gl && !g_glES) {   // the driver may hand out an ES context anyway (GL shims): use the ES shaders and formats
+            int prof = 0; SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &prof);
+            if (prof == SDL_GL_CONTEXT_PROFILE_ES) g_glES = true;
+        }
         if (!gl) { showError("The Binding of Isaac", g_glES ? "OpenGL ES 3.0 is required" : "OpenGL 3.3 is required", win); return 1; }
         SDL_GL_SetSwapInterval(cfg.vsync ? 1 : 0);
         if (!renderInit()) { showError("The Binding of Isaac", g_glES ? "Could not initialize OpenGL ES 3.0" : "Could not initialize OpenGL 3.3", win); return 1; }
@@ -766,7 +795,7 @@ int main(int argc, char** argv) {
                 remove(old.c_str());
             }
         }
-        int dw, dh; SDL_GL_GetDrawableSize(win, &dw, &dh);
+        int dw, dh; renderSizeFor(win, cfg.renderHeight, dw, dh);
         renderPreload(keys, dw, dh, nullptr);
         preloadTotal = keys.size();
         logf("preload: %zu graphics queued\n", keys.size());
@@ -819,6 +848,7 @@ int main(int argc, char** argv) {
         if (rnd() % 90 == 0) { int c = (int[]){32, 13, 'E', 69, 27, 'Q', 'P', 16}[rnd() % 8]; if (c == 27 && rnd() % 4) c = 32; keyEvent(c, c == 32 ? 32 : 0, true); keyEvent(c, 0, false); }
     };
 
+    if (headless && getenv("ISAAC_FRAMETEST")) { rasterFrameSelfTest(); return 0; }
     if (headless) {
         // ---------------------------------------------------------------- test mode: deterministic, single thread
         while (running && !g_player.quit) {
@@ -1703,6 +1733,16 @@ int main(int argc, char** argv) {
                 else if (j.op == "eval") { std::lock_guard<std::mutex> lk(inMu); evalQ.push_back(j.arg); }
                 else if (j.op == "quit") running = false;
             }
+            if (touchUI && !getenv("ISAAC_TOUCH_INJECT") && SDL_GetNumTouchDevices() > 0) {
+                // (a finger whose "up" never reached the touch controls - the console or a gesture took the event -
+                // lets go of its joystick: SDL's own list of the fingers on the screen is the truth)
+                std::vector<int64_t> live;
+                for (int d = 0; d < SDL_GetNumTouchDevices(); d++) {
+                    SDL_TouchID tid = SDL_GetTouchDevice(d);
+                    for (int f = 0; f < SDL_GetNumTouchFingers(tid); f++) if (SDL_Finger* fg = SDL_GetTouchFinger(tid, f)) live.push_back((int64_t)fg->id);
+                }
+                touch.prune(live, nowSec());
+            }
             if (touchUI) touch.update(touchCtx(), nowSec());
             if (conTouchPending > 0 && nowSec() >= conTouchPending) { conTouchPending = 0; if (conCanOpen()) conOpen(); }   // (three fingers, no fourth)
             {   // rebinding screen: opened from the game's Control options page (menuui.cpp), saved when closed
@@ -1786,7 +1826,7 @@ int main(int argc, char** argv) {
             bool held = alpha > 1.02;
             // if logic falls behind (e.g. when loading a room), extrapolate motion a little instead of freezing
             if (alpha > 1.35) alpha = 1.35;
-            int dw, dh; SDL_GL_GetDrawableSize(win, &dw, &dh);
+            int dw, dh; renderSizeFor(win, cfg.renderHeight, dw, dh);
             double r0 = nowSec();
             renderFrame(dw, dh, alpha);
             if (touchUI && !wiz.isOpen()) {

@@ -131,6 +131,19 @@ void TouchControls::releaseAll(double now) {
     menuId_ = -1;
 }
 
+void TouchControls::prune(const std::vector<int64_t>& live, double now) {
+    (void)now;
+    auto on = [&](int64_t id) { for (int64_t l : live) if (l == id) return true; return false; };
+    static const int kMove[4] = {'A', 'W', 'D', 'S'}, kShoot[4] = {37, 38, 39, 40};
+    for (int w = 0; w < 2; w++) {
+        Stick& s = st_[w];
+        if (s.id == -1 || on(s.id)) continue;
+        for (int i = 0; i < 4; i++) if (s.keys[i]) { s.keys[i] = 0; press(w == 0 ? kMove[i] : kShoot[i], false); }
+        s.id = -1;
+    }
+    for (auto& h : hold_) if (h.code && h.id >= 0 && !on(h.id)) { h.up = true; h.id = -2; }
+}
+
 void TouchControls::update(const TouchCtx& c, double now) {
     if (c.gameplay != lastPlay_) {
         // pause, boss "VS" screen, death...: the HUD buttons and the menu finger are let go; a finger still on a
@@ -138,10 +151,27 @@ void TouchControls::update(const TouchCtx& c, double now) {
         // vanished and Isaac stood still after the boss intro until the finger was lifted and put down again)
         lastPlay_ = c.gameplay;
         for (int w = 0; w < 2; w++) if (st_[w].id != -1) steer(st_[w], w, st_[w].fx, st_[w].fy);
+        if (c.gameplay) {   // (play goes on: every stick key no finger holds is sent up again, whatever the game kept)
+            static const int kMv[4] = {'A', 'W', 'D', 'S'}, kSh[4] = {37, 38, 39, 40};
+            for (int w = 0; w < 2; w++) for (int i = 0; i < 4; i++) {
+                int code = w == 0 ? kMv[i] : kSh[i];
+                if (!(st_[w].id != -1 && st_[w].keys[i])) { keyRef_[code] = 0; out_.key(code, false); }
+            }
+        }
         for (auto& h : hold_) if (h.code) { press(h.code, false); h = Hold(); }
         menuId_ = -1;
     }
     for (auto& h : hold_) if (h.code && h.up && now - h.since >= kMinHold) { press(h.code, false); h = Hold(); }
+    // (a safety net: every movement / shooting key the touch controls hold must belong to a finger on a stick; one
+    // that doesn't - a release lost somewhere - is let go, so Isaac never keeps walking or shooting on his own)
+    static const int kMove[4] = {'A', 'W', 'D', 'S'}, kShoot[4] = {37, 38, 39, 40};
+    for (int w = 0; w < 2; w++)
+        for (int i = 0; i < 4; i++) {
+            int code = w == 0 ? kMove[i] : kShoot[i];
+            bool want = st_[w].id != -1 && st_[w].keys[i];
+            bool held = false; for (auto& h : hold_) held |= h.code == code;
+            if (!want && !held && keyRef_[code] > 0) { keyRef_[code] = 0; out_.key(code, false); }
+        }
 }
 
 float TouchControls::moveAmount() const {

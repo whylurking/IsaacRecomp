@@ -53,7 +53,8 @@ int autoAimKey() {
 }
 void debugEval(const std::string& e) {
     if (e == "wide minimap") { wideToggleMinimap(); logf("[wide] minimap %s\n", wideMinimapShown() ? "on" : "off"); return; }
-    if (e.compare(0, 8, "genesis ") == 0) { genesisDebug(e.substr(8)); return; }   // (GenesisConsole: open, type ..., a command)
+    if (e.compare(0, 8, "genesis ") == 0) { genesisDebug(e.substr(8)); return; }
+    if (e.compare(0, 10, "continuum ") == 0) { continuumDebug(e.substr(10)); return; }   // (Continuum: keys, state)   // (GenesisConsole: open, type ..., a command)
     if (e.compare(0, 5, "call ") == 0) {   // call <path> <method> [numeric args...]
         std::istringstream ss(e.substr(5)); std::string path, method; ss >> path >> method;
         std::vector<Value> args; std::string a; while (ss >> a) { double n = strToNum(a); args.push_back(std::isnan(n) ? Value(mkstr(a)) : Value(n)); }

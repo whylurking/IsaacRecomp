@@ -193,6 +193,57 @@ Included:
                       blind, the most common), protanopia (red-blind) or tritanopia
                       (blue-blind); strength = 0-100. Only the colours on screen change.
 
+  Good Saac           fixes bugs of the Flash games (checked one by one against each
+  (goodsaac)          game's code; each fix has its own option, all on):
+                      - subtitles, names (original, WotL): the line under 14 items'
+                        names (Sacred Heart said "Tears Up"...), "Magdalena" and
+                        "XXX" in mini-boss banners.
+                      - heart_name: <3 had no name in the collection.
+                      - last_will: the death diary's empty picture (Razor Blade,
+                        "killed by nothing").
+                      - eternal_heart (original, WotL): an Eternal Heart now saves
+                        ??? (or anyone with no heart containers).
+                      - shop_pills (WotL, Eternal): pills for sale changed colour
+                        when bought.
+                      - challenge_pause: pausing in a challenge room brought all
+                        the waves at once.
+                      - challenge_music: its music went on after leaving the room.
+                      - mom_red: a teleport during Mom's death left the screen red.
+                      - foot_shadow: Mom's or Satan's foot hurt you after they died.
+                      - mom_voice (original, WotL): Mom's Heart repeating "Isaac!".
+                      - gamekid_head: The Gamekid left the head flipped.
+                      - daddy_stomps (WotL, Eternal): Daddy Longlegs stomped only
+                        once on bosses that don't move (Gurdy, Isaac).
+                      - unlocks: the Headless Horseman also unlocked Little Chad;
+                        (WotL, Eternal) The Chest gave ??? Eve's trinket and Eve
+                        ???'s.
+                      - xl_depths (WotL, Eternal): XL Depths' first boss was
+                        treated as Mom (no item; Large Marge won there).
+                      - forget_me_now (WotL, Eternal): in the Cathedral it made a
+                        Sheol.
+                      - secrets_keys (original, WotL): the secrets screen moved
+                        two secrets per arrow key.
+                      - select_click: no sound when changing character with keys.
+                      - mom_deals: after Mom (Depths 2), the devil / angel room
+                        door stayed hidden behind her parts. It now shows.
+                      - breakfast: with every item already owned (The D6 / Dice,
+                        Habit, Scapular...), the game froze looking for one. It
+                        gives Breakfast instead, as Rebirth does.
+
+  Continuum           leave a run and carry on with it later, as Rebirth's
+  (continuum)         "Continue". On the pause screen, "Exit to main menu" asks
+                      "Are you sure you want me to die?": "Yes" ends the run as
+                      always; "No", in a room with no enemies left, saves the run
+                      and goes to the main menu, and the next Start there takes you
+                      back into it (that room, everything you had). You appear in
+                      the middle of the room, or, if something is there (a rock, a
+                      pit, the trapdoor, an item), on the free spot nearest to the
+                      door you came in by. In a room with enemies, "No" does what it
+                      always did. A click anywhere else, Escape or the controller's
+                      B / circle go back to the pause screen. The run is kept in
+                      saves/continuum_<game>.txt until you carry on with it. The
+                      Gone's run and BaseTime's clocks carry on too.
+
 THE isaac.ini FILE
 ------------------
 Created automatically next to the executable the first time you run it.
@@ -221,7 +272,9 @@ Created automatically next to the executable the first time you run it.
   performance = 0     1 = performance diagnostics always on (same as F3, see below)
   touch_controls = 1  (Android, Switch) 0 turns off the touch joysticks, HUD taps and the
                       pause button (touch then only works in menus)
-  render_height = 0   (Android only) rendering resolution, 0 = automatic (see ANDROID)
+  render_height = 0   rendering resolution: on PC, 0 = the window's; lower (e.g. 540 on
+                      a 720p screen) draws at that height and scales up, for slow
+                      computers. On Android 0 = automatic (see ANDROID)
   joystick_acceleration = 1
                       analog movement: with a stick (touch, controller, Switch) the
                       speed depends on how far you push it, from 40% just past the
@@ -295,6 +348,30 @@ starts, the saves found there are copied to the "saves" folder (the old ones are
 The same folder also holds preload.txt / preload_og.txt / preload_eternal.txt
 (graphics learned on this machine), screenshots and performance.txt.
 Saves from the Flash game can be converted with tools/save_converter.html (see above).
+
+CHANGES IN VERSION 16 (v1.6.0 public release numbering)
+--------------------------------------------------------
+- New mod: Good Saac (category "Bug fixes"): 20 fixes for known bugs of the Flash games,
+  each checked against the code of the three games (see MODS). Off unless turned on, like
+  every mod; each fix can be turned off on its own. Among them: the devil / angel room
+  door after Mom now shows, and with every item already owned the game gives Breakfast
+  instead of freezing.
+- New mod: Continuum (category "Gameplay"): leave a run from the pause screen ("No" in
+  "Are you sure you want me to die?", in a room with no enemies) and carry on with it the
+  next time you press Start, as Rebirth's "Continue" (see MODS).
+- PC / Linux: render_height in isaac.ini now works there too: the game draws at that
+  height and scales the picture up (for slow computers; 0 = as before). Also: OpenGL ES
+  computers and handhelds are supported (the program falls back to OpenGL ES 3 / 2 when
+  desktop OpenGL is missing), less memory is used on low-memory devices, and the big
+  border picture around the room is drawn faster and sharper. These come from HellRok's
+  port to the RG CubeXX handheld (github.com/HellRok/IsaacRecomp): thank you!
+- Eternal Edition: an item pedestal can no longer be pushed or dragged around the room after
+  you take its item (it stays put, as in the Flash game).
+- Android: a finger whose lift never reached the touch controls (with the console open,
+  or during a multi-finger gesture) no longer leaves Isaac walking or shooting by himself:
+  the joysticks follow the fingers the system says are on the screen, every frame, and
+  any move / shoot key no finger holds is let go.
+- Mods that change the same function of the game (The Gone and Good Saac) work together.
 
 CHANGES IN VERSION 15 (v1.5.0 public release numbering)
 --------------------------------------------------------

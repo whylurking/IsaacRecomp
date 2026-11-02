@@ -278,6 +278,7 @@ struct Cand { DisplayObject* d; RectF r; double cx, cy; DisplayObject* show; };
 static DisplayObject* topLevel(DisplayObject* d) { while (d->parent && d->parent != vm.root) d = d->parent; return d; }
 static double area(const RectF& r) { return (r.x1 - r.x0) * (r.y1 - r.y0); }
 static uint32_t g_clickTick = 0; static bool g_afterClick = false, g_hideMoving = false;   // (see menuUiTick)
+int g_menuNavClick = 0;   // the click being made: 0 the mouse's, 1 the controller's A, 2 its B (a mod: Continuum's "No")
 static ButtonObj* g_modalBtn = nullptr;   // a button whose hit area covers the screen ("No" of a dialog, a sheet's Back)
 // a point inside the option where a click reaches it (its center, else a 5x5 grid inside its rect)
 static bool pointOn(const Cand& c, double& x, double& y) {
@@ -459,7 +460,9 @@ static void click(const Cand& c);
 // B / circle: what the mouse would do to go back. The pause screen itself: resume (P). A dialog: its full-screen
 // "No". A sheet: its Back button (Escape would close every sheet at once: Controls -> straight to the main menu).
 // Otherwise Escape, which the game's Back buttons also answer to.
+static bool s_goingBack = false;
 static void goBack(const std::vector<Cand>& cs) {
+    struct Back { Back() { s_goingBack = true; } ~Back() { s_goingBack = false; } } back;
     if (g_inGame && !g_gameplay) {
         MovieClip* sheet = optionsSheet();
         if (!sheet || sheet->cur == 2) { pulse(80, 0); return; }   // the pause screen itself: resume
@@ -474,7 +477,9 @@ static void click(const Cand& c) {
     if (c.d == g_rebindLabel) { g_rebindRequests++; return; }
     double x, y; bool hit = pointOn(c, x, y);
     if (getenv("ISAAC_INPUT_LOG")) logf("[nav] click %s at %.0f,%.0f (hit %d)\n", targetPath(c.d)->s.c_str(), x, y, (int)hit);
+    g_menuNavClick = s_goingBack ? 2 : 1;
     mouseEvent(x, y, 0); mouseEvent(x, y, 1); mouseEvent(x, y, 2);
+    g_menuNavClick = 0;
 }
 
 // Escape on the pause screen itself (not one of its sheets): resume, as P does. The pause sheet's "Exit to main

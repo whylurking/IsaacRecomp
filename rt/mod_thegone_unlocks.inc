@@ -434,16 +434,9 @@ void pictureTick() {
 }
 
 // ============================================================ the game's functions, wrapped (each room is a new _root.a)
-struct Wrap { const char* name; Function* wrap = nullptr; Function* orig = nullptr; Object* a = nullptr; };
-Value callOrig(Wrap& w, Act& ac, Value thisv, int argc, Value* argv) { return w.orig ? callValue(ac, Value((Object*)w.orig), thisv, argc, argv) : VUNDEF; }
-void hookFn(Wrap& w, const Value& a, NativeFn fn) {
-    if (!w.wrap) {
-        Function* f = gcNew<Function>(); f->proto = protos::function; f->nat = fn; f->dbgName = w.name; gcPin(f);
-        w.wrap = f; gcAddRoot((GcObj**)&w.orig); gcAddRoot((GcObj**)&w.a);
-    }
-    Value cur = V(a, w.name);
-    if (cur.isObj() && cur.o != (Object*)w.wrap && cur.o->kind == OK_FUNCTION) { w.orig = (Function*)cur.o; w.a = a.o; S(a, w.name, Value((Object*)w.wrap)); }
-}
+using Wrap = GameHook;   // (mod_hook.h)
+Value callOrig(Wrap& w, Act& ac, Value thisv, int argc, Value* argv) { return callGameOrig(w, ac, thisv, argc, argv); }
+void hookFn(Wrap& w, const Value& a, NativeFn fn) { hookGameFn(w, a, fn); }
 Value callIn(Act& ac, const Value& obj, const char* fn, std::initializer_list<Value> args) {
     std::vector<Value> av(args);
     return callMethodK(ac, obj, intern(fn), (int)av.size(), av.data());

@@ -355,7 +355,12 @@ static void texUploadImpl(GLuint tex, int x, int y, int w, int h, const uint32_t
 // Shapes are rasterized (CPU, PlutoVG) at the scale they're displayed at, quantized to quarter-octaves, and
 // placed in 2048x2048 pages created up front. Creating textures mid-game stalled
 // rendering on some drivers (~30 ms each time a new graphic appeared).
-static const int kPage = 2048;
+// Atlas pages: 2048x2048 (16 MB) normally. On the reduced-memory profile 1024x1024 (4 MB): when the atlas is full the least recently
+// used PAGE is thrown away, and a 16 MB page held ~670 textures - dropping them in one go meant a storm of re-rasterizing (and ~200 MB
+// of transient buffers) in the next frames, typically when the title screen or a new floor appeared. Smaller pages: smaller storms.
+static int kPage = 2048;
+static int pageMB() { return std::max(1, (int)(((long)kPage * kPage * 4) >> 20)); }
+int renderAtlasMaxPages() { return std::max(4, g_renderCfg.cacheMB / pageMB()); }
 struct TexKey {
     const void* def; uint32_t variant; int16_t bucket;
     bool operator==(const TexKey& o) const { return def == o.def && variant == o.variant && bucket == o.bucket; }
@@ -364,6 +369,7 @@ struct TexKeyHash { size_t operator()(const TexKey& k) const { return std::hash<
 struct TexEntry {
     int page = -1; GLuint tex = 0; int px = 0, py = 0, texW = 1, texH = 1;
     int w = 0, h = 0; double x0 = 0, y0 = 0, scale = 1; uint32_t lastUse = 0; bool empty = false;
+    bool frame = false; uint32_t fill = 0; double fx0 = 0, fy0 = 0, fx1 = 0, fy1 = 0;   // (Raster::frame: flat colour around the raster)
 };
 struct Shelf { int y, h, x; };
 struct Page { GLuint tex = 0; std::vector<Shelf> shelves; int nextY = 0; uint32_t lastUse = 0; std::vector<TexKey> keys; };
@@ -383,7 +389,7 @@ int renderAtlasPages() { return (int)g_pages.size(); }
 static void addPage() { Page p; p.tex = newTexture(kPage, kPage); g_pages.push_back(p); }
 static bool atlasPlace(int w, int h, int& page, int& ox, int& oy) {
     for (size_t i = 0; i < g_pages.size(); i++) if (shelfAlloc(g_pages[i], w, h, ox, oy)) { page = (int)i; return true; }
-    size_t maxPages = (size_t)std::max(4, g_renderCfg.cacheMB / 16);
+    size_t maxPages = (size_t)renderAtlasMaxPages();
     if (g_pages.size() < maxPages) { addPage(); page = (int)g_pages.size() - 1; return shelfAlloc(g_pages.back(), w, h, ox, oy); }
     // evict the least recently used page (one not in use this frame)
     int lru = -1;
@@ -411,8 +417,9 @@ static TexEntry* storeRaster(const TexKey& k, bool ok, Raster& r) {
     TexEntry e; e.lastUse = g_frameNo;
     if (!ok || r.w < 3 || r.h < 3) { e.empty = true; g_cache[k] = e; return nullptr; }
     e.w = r.w; e.h = r.h; e.x0 = r.x0; e.y0 = r.y0; e.scale = r.scale;
+    e.frame = r.frame; e.fill = r.fill; e.fx0 = r.fx0; e.fy0 = r.fy0; e.fx1 = r.fx1; e.fy1 = r.fy1;
     int page, ox, oy;
-    if (r.w <= 1536 && r.h <= 1536 && atlasPlace(r.w + 1, r.h + 1, page, ox, oy)) {
+    if (r.w <= std::min(1536, kPage - 2) && r.h <= std::min(1536, kPage - 2) && atlasPlace(r.w + 1, r.h + 1, page, ox, oy)) {
         Page& p = g_pages[page];
         e.page = page; e.tex = p.tex; e.px = ox; e.py = oy; e.texW = e.texH = kPage;
         p.keys.push_back(k); p.lastUse = g_frameNo;
@@ -454,6 +461,7 @@ static void releaseBm(const BmTex& t0) {
 bool renderInit() {
     if (!loadGL()) return false;
     logf("OpenGL: %s | %s\n", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER));
+    { const char* v = (const char*)glGetString(GL_VERSION); if (v && strstr(v, "OpenGL ES")) g_glES = true; }   // (an ES-only driver: use the ES shaders and formats)
     g_prog = link(kVS, kFS); g_progBlur = link(kVS, kBlurFS);
     u_tex = glGetUniformLocation(g_prog, "uTex"); u_alphaTest = glGetUniformLocation(g_prog, "uAlphaTest"); u_view = glGetUniformLocation(g_prog, "uView");
     ub_tex = glGetUniformLocation(g_progBlur, "uTex"); ub_dir = glGetUniformLocation(g_progBlur, "uDir"); ub_view = glGetUniformLocation(g_progBlur, "uView");
@@ -471,7 +479,8 @@ bool renderInit() {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glBindBuffer(GL_ARRAY_BUFFER, g_vboRing.buf);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    for (int i = 0; i < g_lim.initialAtlasPages; i++) addPage();   // atlas pages created up front
+    kPage = g_lim.small ? 1024 : 2048;
+    for (int i = 0; i < g_lim.initialAtlasPages * (16 / pageMB()); i++) addPage();   // atlas pages created up front
     return true;
 }
 
@@ -566,6 +575,26 @@ static GLuint whiteTex() {
 }
 
 // ============================================================ render targets (FBO) for filters
+// A framebuffer with `tex` as colour and a stencil buffer (masks use the stencil; depth is never used). On OpenGL ES a stencil-only
+// renderbuffer (1 byte per pixel) is used instead of DEPTH24_STENCIL8 (4 bytes): on a phone/handheld with shared memory the
+// layers' and targets' buffers were a big share of the GPU memory. Falls back to the packed format if the driver refuses.
+static GLuint makeStencilFbo(GLuint tex, int w, int h, GLuint& rb) {
+    GLuint fbo; glGenFramebuffers(1, &fbo); glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    rb = 0; bool ok = false;
+    if (g_glES) {
+        glGenRenderbuffers(1, &rb); glBindRenderbuffer(GL_RENDERBUFFER, rb);
+        glRenderbufferStorage(GL_RENDERBUFFER, 0x8D48 /*GL_STENCIL_INDEX8*/, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, 0x8D20 /*GL_STENCIL_ATTACHMENT*/, GL_RENDERBUFFER, rb);
+        ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (!ok) { glFramebufferRenderbuffer(GL_FRAMEBUFFER, 0x8D20, GL_RENDERBUFFER, 0); glDeleteRenderbuffers(1, &rb); rb = 0; static bool said = false; if (!said) { said = true; logf("GL: stencil-only renderbuffer not supported, using depth+stencil\n"); } }
+    }
+    if (!ok) {
+        glGenRenderbuffers(1, &rb); glBindRenderbuffer(GL_RENDERBUFFER, rb); glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb);
+    }
+    return fbo;
+}
 struct RT { GLuint fbo = 0, tex = 0, rb = 0; int w = 0, h = 0; };
 static std::vector<RT> g_rtPool;
 // returns an intermediate texture of at least w x h (the smallest that fits): filters are processed one
@@ -585,22 +614,24 @@ static RT acquireRT(int w, int h, bool exact = false) {
     if (!exact) { w = (w + 255) & ~255; h = (h + 255) & ~255; }   // rounded sizes: easier to reuse
     RT r; r.w = w; r.h = h;
     r.tex = newTexture(w, h);
-    glGenRenderbuffers(1, &r.rb); glBindRenderbuffer(GL_RENDERBUFFER, r.rb); glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-    glGenFramebuffers(1, &r.fbo); glBindFramebuffer(GL_FRAMEBUFFER, r.fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r.tex, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, r.rb);
+    r.fbo = makeStencilFbo(r.tex, w, h, r.rb);
     return r;
 }
 static void releaseRT(const RT& r) { g_rtPool.push_back(r); if (g_rtPool.size() > 12) { RT o = g_rtPool.front(); g_rtPool.erase(g_rtPool.begin());
     glrec([o] { glDeleteFramebuffers(1, &o.fbo); glDeleteTextures(1, &o.tex); glDeleteRenderbuffers(1, &o.rb); }); } }   // (after its last recorded use)
 struct Target { GLuint fbo; int w, h; float flip = 1.f; };
+// Reduced render resolution (render_height): the frame is drawn into an offscreen target of the render size
+// (g_baseFbo) and scaled up to the window (outW x outH) at the end of the frame. 0 = draw straight into the window.
+static GLuint g_baseFbo = 0, g_baseTex = 0, g_baseRb = 0, g_curBase = 0; static int g_baseW = 0, g_baseH = 0;
+static int g_outW = 0, g_outH = 0; static bool g_baseActive = false;
+void renderSetOutput(int outW, int outH) { g_outW = outW; g_outH = outH; }
 static std::vector<Target> g_targets;
 // RainbowVision (mods/RainbowVision.mod): a colour matrix applied to what reaches the window (not to the layers
 // drawn off screen first: they reach the window afterwards). Set by the mod (logic thread), read here.
 extern std::atomic<bool> g_colorMatOn; extern float g_colorMat[9];   // (mod_rainbow.cpp)
 static void bindTarget(const Target& t) {
     flush();
-    bool col = t.fbo == 0 && g_colorMatOn.load(std::memory_order_acquire);
+    bool col = t.fbo == g_curBase && g_colorMatOn.load(std::memory_order_acquire);
     float m[9]; memcpy(m, g_colorMat, sizeof m);
     glrec([t, col, m] {
         glBindFramebuffer(GL_FRAMEBUFFER, t.fbo); glViewport(0, 0, t.w, t.h); glUseProgram(g_prog); glUniform2f(u_view, (float)t.w, (float)t.h); glUniform1f(u_flip, t.flip);
@@ -1193,6 +1224,18 @@ static void execRange(size_t from, size_t to) {
                 TexEntry* e = rasterFor(c);
                 if (!e) break;
                 double inv = 1.0 / e->scale;
+                if (e->frame) {   // the flat colour around a cropped frame graphic (first: the raster is drawn over its edge)
+                    double qx0 = e->x0 + inv, qy0 = e->y0 + inv, qx1 = e->x0 + (e->w - 1) * inv, qy1 = e->y0 + (e->h - 1) * inv, ov = 1.0;
+                    uint32_t f = pxToArgb(e->fill); float a = (float)(f >> 24);
+                    if (a > 0) {
+                        CX k = c.cx;
+                        k.rm *= std::min(1.f, ((f >> 16) & 255) / a); k.gm *= std::min(1.f, ((f >> 8) & 255) / a); k.bm *= std::min(1.f, (f & 255) / a); k.am *= a / 255.f;
+                        GLuint wt = whiteTex(); Mat fm = g_off * c.m;
+                        auto rect = [&](double x0, double y0, double x1, double y1) { if (x1 > x0 && y1 > y0) quad(wt, fm, x0, y0, x1, y1, k); };
+                        rect(e->fx0, e->fy0, e->fx1, qy0 + ov); rect(e->fx0, qy1 - ov, e->fx1, e->fy1);
+                        rect(e->fx0, qy0 + ov, qx0 + ov, qy1 - ov); rect(qx1 - ov, qy0 + ov, e->fx1, qy1 - ov);
+                    }
+                }
                 quad(e->tex, g_off * c.m, e->x0 + inv, e->y0 + inv, e->x0 + (e->w - 1) * inv, e->y0 + (e->h - 1) * inv, c.cx,
                      (float)(e->px + 1) / e->texW, (float)(e->py + 1) / e->texH, (float)(e->px + e->w - 1) / e->texW, (float)(e->py + e->h - 1) / e->texH);
                 break;
@@ -1260,10 +1303,7 @@ static BmTex& bmTarget(uint32_t uid, int w, int h) {
     BmTex& t = g_bm[uid];
     if (!t.tex || t.w != w || t.h != h) { if (t.tex) releaseBm(t); t = acquireBm(w, h); }
     if (!t.fbo) {
-        glGenRenderbuffers(1, &t.rb); glBindRenderbuffer(GL_RENDERBUFFER, t.rb); glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-        glGenFramebuffers(1, &t.fbo); glBindFramebuffer(GL_FRAMEBUFFER, t.fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t.tex, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, t.rb);
+        t.fbo = makeStencilFbo(t.tex, w, h, t.rb);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
     return t;
@@ -1391,7 +1431,7 @@ void renderPreload(const std::vector<PreKey>& keys, int winW, int winH, const st
             double sc = std::pow(2.0, bucket / 4.0);
             double area = std::min(4096.0, (b.x1 - b.x0) * sc + 4) * std::min(4096.0, (b.y1 - b.y0) * sc + 4);
             static double budget = 0;
-            if (budget == 0) budget = 0.6 * (double)std::max(4, g_renderCfg.cacheMB / 16) * kPage * kPage;
+            if (budget == 0) budget = 0.6 * (double)renderAtlasMaxPages() * kPage * kPage;
             if (area > budget) continue;
             budget -= area;
         }
@@ -1690,7 +1730,19 @@ void renderFrame(int winW, int winH, double alpha) {
     trimFilterCache();
     glBindBuffer(GL_ARRAY_BUFFER, g_vboRing.buf);
     evictBig();
-    g_targets.clear(); g_targets.push_back({0, winW, winH});
+    g_baseActive = false; g_curBase = 0;
+    if (g_outW > 0) {   // reduced resolution: an offscreen target of the render size, scaled up at the end of the frame
+        if (!g_baseFbo || g_baseW != winW || g_baseH != winH) {
+            if (g_baseFbo) { glDeleteFramebuffers(1, &g_baseFbo); glDeleteRenderbuffers(1, &g_baseRb); glDeleteTextures(1, &g_baseTex); }
+            g_baseTex = newTexture(winW, winH);
+            g_baseFbo = makeStencilFbo(g_baseTex, winW, winH, g_baseRb);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            g_baseW = winW; g_baseH = winH;
+            logf("render target %dx%d (scaled up to %dx%d)\n", winW, winH, g_outW, g_outH);
+        }
+        g_curBase = g_baseFbo; g_baseActive = true;
+    }
+    g_targets.clear(); g_targets.push_back({g_curBase, winW, winH});
     bindTarget(g_targets.back());
     g_recStencil = g_recScissor = false;
     glrec([] {
@@ -1750,6 +1802,18 @@ void renderFrame(int winW, int winH, double alpha) {
 
 void renderEndFrame() {
     Uint64 t0 = SDL_GetPerformanceCounter();
+    if (g_baseActive) {   // scale the render target up to the window (the render target's rows are bottom-up: v flipped)
+        g_baseActive = false;
+        flush();
+        g_targets.clear(); g_targets.push_back({0, g_outW, g_outH});
+        g_curBase = 0; bindTarget(g_targets.back());
+        glrec([] { glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_BLEND); glUniform1f(u_alphaTest, 0.0f); });
+        setSmooth(g_baseTex, true);
+        Mat id; quad(g_baseTex, id, 0, 0, g_outW, g_outH, CX(), 0, 1, 1, 0);
+        flush();
+        glrec([] { glEnable(GL_BLEND); });
+        g_frameOpen = true;
+    }
     submitFrame();
     g_vboRing.endFrame(); g_pboRing.endFrame();
     g_frameOpen = false;
@@ -1757,21 +1821,22 @@ void renderEndFrame() {
 }
 
 bool renderScreenshot(const char* path) {
-    std::vector<uint8_t> px((size_t)g_winW * g_winH * 4);
-    glReadPixels(0, 0, g_winW, g_winH, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    const int W = g_outW > 0 ? g_outW : g_winW, H = g_outW > 0 ? g_outH : g_winH;   // (the window, not the render target)
+    std::vector<uint8_t> px((size_t)W * H * 4);
+    glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
     std::string p = path;
     if (p.size() > 4 && p.substr(p.size() - 4) == ".bmp") {
-        SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, g_winW, g_winH, 24, SDL_PIXELFORMAT_RGB24);
+        SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, W, H, 24, SDL_PIXELFORMAT_RGB24);
         if (!s) return false;
-        for (int y = 0; y < g_winH; y++) for (int x = 0; x < g_winW; x++) {
-            const uint8_t* src = &px[((size_t)(g_winH - 1 - y) * g_winW + x) * 4];
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+            const uint8_t* src = &px[((size_t)(H - 1 - y) * W + x) * 4];
             uint8_t* dst = (uint8_t*)s->pixels + y * s->pitch + x * 3; dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
         }
         bool ok = SDL_SaveBMP(s, path) == 0; SDL_FreeSurface(s); return ok;
     }
     FILE* f = fopen(path, "wb"); if (!f) return false;
-    fprintf(f, "P6\n%d %d\n255\n", g_winW, g_winH);
-    for (int y = g_winH - 1; y >= 0; y--) for (int x = 0; x < g_winW; x++) fwrite(&px[((size_t)y * g_winW + x) * 4], 1, 3, f);
+    fprintf(f, "P6\n%d %d\n255\n", W, H);
+    for (int y = H - 1; y >= 0; y--) for (int x = 0; x < W; x++) fwrite(&px[((size_t)y * W + x) * 4], 1, 3, f);
     fclose(f); return true;
 }
 

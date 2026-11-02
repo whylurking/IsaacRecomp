@@ -222,6 +222,20 @@ void drawMenu(int which) {
 }
 }  // namespace
 
+// Continuum: the run is left to be resumed later (not over: nothing is recorded), and later goes on
+std::string basetimeSuspend() {
+    char b[128];
+    snprintf(b, sizeof b, "%ld %ld %d %ld %ld", s_running ? s_gameTicks : 0, s_running ? nowTotal() : 0, s_runEnding, s_runEndMs[0], s_runEndMs[1]);
+    s_running = false; s_result = R_NONE; s_endGame = s_endTotal = -1; s_runEnding = 0;
+    return b;
+}
+void basetimeResume(const std::string& s) {
+    long ticks = 0, total = 0, e0 = -1, e1 = -1; int ending = 0;
+    if (sscanf(s.c_str(), "%ld %ld %d %ld %ld", &ticks, &total, &ending, &e0, &e1) < 2) return;
+    s_running = true; s_gameTicks = ticks + 1; s_total0 = g_player.timeMs - total - 1000.0 / 30;
+    s_endGame = s_endTotal = -1; s_result = R_NONE;
+    s_runEnding = ending >= 0 && ending <= 5 ? ending : 0; s_runEndMs[0] = e0; s_runEndMs[1] = e1;
+}
 void basetimeTick(const ModInfo& m) {
     static bool rooted = false;
     if (!rooted) { rooted = true; gcAddRoot((GcObj**)&g_clip); gcAddRoot((GcObj**)&g_menu); for (auto& l : g_c) for (auto& c : l) { gcAddRoot((GcObj**)&c[0]); gcAddRoot((GcObj**)&c[1]); } }

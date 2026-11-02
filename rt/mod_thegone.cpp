@@ -23,6 +23,7 @@
 #include "swfdata.h"
 #include "snapshot.h"
 #include "mod_ui.h"
+#include "mod_hook.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -586,6 +587,10 @@ void startRun(const Value& a) {
     logf("thegone: a run as The Gone\n");
 }
 }  // namespace
+
+// Continuum: whether the run being saved is The Gone's, and a saved run going on (his items already given)
+bool goneRunActive() { return goneRunNow(); }
+void goneResume(bool gone) { s_running = true; s_goneRun = gone; }
 
 bool goneThingInfo(bool card, int id, std::string& name, std::string& desc, bool& active, int& quality) {
     active = false;

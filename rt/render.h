@@ -42,6 +42,7 @@ const Snapshot* renderCurrent();
 void renderFrame(int winW, int winH, double alpha);
 Mat stageToWindowFor(int winW, int winH);
 bool renderScreenshot(const char* path);
+void renderSetOutput(int outW, int outH);   // render at a lower resolution and scale up to outW x outH (0 = draw straight into the window)
 void renderOverlay(const std::vector<std::string>& lines);
 void renderHint(const std::string& text);   // small text in the bottom-right corner
 // touch joysticks drawn over the frame (window pixels): base centre/radius and knob position

@@ -1102,6 +1102,7 @@ bool touchAnyButton() {
     for (auto* b : bs) if (b->enabled && !b->removed) return true;
     return false;
 }
+bool (*g_buttonReleaseHook)(ButtonObj* b) = nullptr;   // (a mod: Continuum's "No")
 void mouseEvent(double x, double y, int type) {
     g_player.mouseX = x; g_player.mouseY = y;
     ButtonObj* over = buttonAt(x, y);
@@ -1118,7 +1119,7 @@ void mouseEvent(double x, double y, int type) {
         g_player.mouseDown = false;
         if (g_player.pressButton) {
             ButtonObj* p = g_player.pressButton; g_player.pressButton = nullptr;
-            if (p == over && !p->removed) { buttonSetState(p, 1); runButtonConds(p, 0x08, 0); }
+            if (p == over && !p->removed) { buttonSetState(p, 1); if (!g_buttonReleaseHook || !g_buttonReleaseHook(p)) runButtonConds(p, 0x08, 0); }
             else if (!p->removed) { buttonSetState(p, 0); runButtonConds(p, 0x100 | 0x40, 0); }
         }
     }

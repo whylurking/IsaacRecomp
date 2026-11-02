@@ -1,4 +1,4 @@
-THE BINDING OF ISAAC — native port for Nintendo Switch (homebrew) — version 1.5.0
+THE BINDING OF ISAAC — native port for Nintendo Switch (homebrew) — version 1.6.0
 =================================================================================
 
 All three versions of the Flash game on Steam are supported: the original, Wrath of the
@@ -156,6 +156,17 @@ save mods.txt and copy it to sd:/switch/isaac/mods/ (replacing the old one).
                   character select screen: no hearts, one hit and he dies. Unlock him
                   by clearing three floors in a row without a hit or a heart; with him,
                   Mom's Heart, Isaac and Satan unlock four new things of his own.
+  RainbowVision   colours for colour-blind players.
+  Good Saac       20 fixes for known bugs of the Flash games (wrong item texts, empty death
+                  diary pictures, an Eternal Heart that didn't save ???, pills for sale
+                  that change colour, challenge waves all at once after a pause, a red
+                  screen after Mom, wrong unlocks, Forget Me Now in the Cathedral, the
+                  deal door hidden after Mom, a freeze when no item is left...). Each
+                  fix can be turned off.
+  Continuum       leave a run and carry on with it later (Rebirth's "Continue"): in the
+                  pause screen's "Are you sure you want me to die?", "No" in a room with
+                  no enemies saves the run; the next Start goes back into it. B goes
+                  back to the pause screen.
 
 IF SOMETHING GOES WRONG
 -----------------------

@@ -114,7 +114,7 @@ at startup. Each version keeps its own save file.
 - **Built-in performance overlay** (F3).
 - **Original, Wrath of the Lamb and Eternal Edition** in a single program.
 - **Save converter** to bring your progress from the Flash version (and back).
-- **Mods**, turned on and off with a mod manager: **StatOn** shows your stats and the devil / angel room chances on screen as in *Repentance*, **GenesisConsole** is a Rebirth-style debug console, **WideSaac** fills wide screens (with *Hyper Zoom*, the room fills the screen, and *Minimap+*), **PillLog** shows the effect of the pills you already know, **Itemnomicon** tells you what an item, trinket or card does before you pick it up, **BaseTime** adds speedrun timers, **The Gone** is a new character in the spirit of *The Lost*, and **RainbowVision** recolours the game for colour-blind players.
+- **Mods**, turned on and off with a mod manager: **StatOn** shows your stats and the devil / angel room chances on screen as in *Repentance*, **GenesisConsole** is a Rebirth-style debug console, **WideSaac** fills wide screens (with *Hyper Zoom*, the room fills the screen, and *Minimap+*), **PillLog** shows the effect of the pills you already know, **Itemnomicon** tells you what an item, trinket or card does before you pick it up, **BaseTime** adds speedrun timers, **The Gone** is a new character in the spirit of *The Lost*, **RainbowVision** recolours the game for colour-blind players, **Good Saac** fixes known bugs of the Flash games, and **Continuum** lets you leave a run and carry on with it later, as Rebirth's *Continue*.
 
 ## 📦 Installation (PC)
 
@@ -181,9 +181,11 @@ Mods are read when the game starts, and `log.txt` lists which ones are on.
 | **BaseTime** (`basetime`) | Speedrun timers, left of the map (with Hyper Zoom, at the room's bottom left): the game time (mm:ss, while you can move: it stops while paused, in cutscenes and while loading) and below it the total time (mm:ss:mmm, everything since the run started). The main menu shows, on a note of its own, your best game time - the fastest run to your furthest ending (Mom, then Mom's Heart, then Isaac or Satan, then The Chest) - and below it your last run's total time, with "win" or "died". |
 | **The Gone** (`thegone`) | A new character in the spirit of Rebirth's *The Lost*, one more place on the character select screen, with his own card like the others' (name, stats, item): a pale Isaac (3.5 damage) who starts with Spirit of the Night (in the original game, which doesn't have it, Transcendence and the Ouija Board) and has no hearts at all: no hearts, heart containers or extra lives, and the first hit kills him. In a devil room he can take one deal for free; then the other deals disappear. He has to be unlocked first (three floors in a row without a hit or a heart), and he unlocks four new things of his own: the card **Negative Isaac** (Mom's Heart: a 15-second shield), **Nothing** (Mom's Heart with no item but his own: some enemies just aren't there), **The Void Shard** (Isaac: enemy shots may go through you) and **Black Mirror** (Satan: the room in negative, the enemies fight each other), each with its own "You unlocked" card. Kept in `saves/thegone_<game>.txt`. |
 | **RainbowVision** (`rainbowvision`) | Colours for colour-blind players: the whole picture is recoloured (daltonization) so colours you can't tell apart look different. `type`: deuteranopia (green-blind, the most common), protanopia (red-blind) or tritanopia (blue-blind); `strength` (0-100). Only the colours on screen change. |
+| **Good Saac** (`goodsaac`) | Fixes known bugs of the Flash games, each checked against the code of the three games, one option per fix: wrong pickup lines under 14 items, "Magdalena"/"XXX" banners, `<3` with no name in the collection, empty death-diary pictures (Razor Blade, "killed by nothing"), an Eternal Heart not saving ???, pills for sale changing colour when bought, challenge waves all at once after a pause, challenge music after leaving the room, a red screen stuck after Mom, Mom's / Satan's foot hurting after they die, Mom's Heart repeating "Isaac!", The Gamekid flipping the head, Daddy Longlegs stomping once on still bosses, wrong unlocks (Headless Horseman, The Chest with ??? / Eve), XL Depths' first boss treated as Mom, Forget Me Now turning the Cathedral into Sheol, double steps on the secrets screen, no click on the character select, the devil / angel room door hidden after Mom, and the game freezing when no item is left to give (it gives Breakfast, as Rebirth does). |
+| **Continuum** (`continuum`) | Rebirth's *Continue*: on the pause screen, "Exit to main menu" asks *"Are you sure you want me to die?"*. **Yes** ends the run as always; **No**, in a room with no enemies left, saves the run and goes to the main menu, and the next **Start** there takes you straight back into it, in that room, with everything you had. You appear in the middle of the room or, if something is there (a rock, a pit, the trapdoor, an item), on the free spot nearest to the door you came in by. In a room with enemies, "No" does what it always did; a click anywhere else, Escape or the controller's B / circle go back to the pause screen. Kept in `saves/continuum_<game>.txt` until you carry on. The Gone's run and BaseTime's clocks carry on too. |
 
 A `.mod` file is plain text: `id`, `name`, `version`, `author`, `description` and the mod's own options as
-`key = value` lines. The code behind each mod is built into the program (`rt/mods.*`, `rt/mod_staton.cpp`, `rt/mod_genesis.cpp`, `rt/mod_widesaac.cpp`, `rt/mod_pilllog.cpp`, `rt/mod_itemnomicon.cpp`, `rt/mod_basetime.cpp`, `rt/mod_thegone.cpp`), so for
+`key = value` lines. The code behind each mod is built into the program (`rt/mods.*`, `rt/mod_staton.cpp`, `rt/mod_genesis.cpp`, `rt/mod_widesaac.cpp`, `rt/mod_pilllog.cpp`, `rt/mod_itemnomicon.cpp`, `rt/mod_basetime.cpp`, `rt/mod_thegone.cpp`, `rt/mod_rainbow.cpp`, `rt/mod_goodsaac.cpp`, `rt/mod_continuum.cpp`), so for
 now new mods come with new versions of IsaacRecomp.
 
 ## 🎮 PC controls
@@ -258,7 +260,7 @@ through Android's low-latency audio path. To choose the resolution yourself, set
 
 ## 🎮 Nintendo Switch (homebrew)
 
-The same native recomp, built as a homebrew application (`.nro`, version 1.5.0). It contains no code or assets from
+The same native recomp, built as a homebrew application (`.nro`, version 1.6.0). It contains no code or assets from
 Nintendo or from the game: you provide the game's `Isaac.exe` yourself, exactly as on PC.
 
 **You need:**
@@ -324,7 +326,7 @@ and taps in menus. The pause button is only shown in handheld mode.
 | `performance`           | `0`      | `1` = performance overlay always on, written to `performance.txt` |
 | `joystick_acceleration` | `1`      | Analog movement: speed follows how far the stick is pushed (full speed at ¾ of its travel). `0` = always full speed |
 | `touch_controls`        | `1`      | Android / Switch: `0` turns off the touch joysticks, HUD taps and pause button |
-| `render_height`         | `0`      | Android: rendering resolution (`0` = automatic; `1080`, `720`, `600`, `540`, `480`) |
+| `render_height`         | `0`      | Rendering resolution. PC: `0` = the window's; lower (e.g. `540`) draws at that height and scales up. Android: `0` = automatic; `1080`, `720`, `600`, `540`, `480` |
 | `mods`                  | (empty)  | The [mods](#-mods) that are on, by id, separated by commas: only until `mods/mods.txt` exists |
 | `bind_keyboard`, `bind_controller`, `controller_move_stick`, `touch_move_side`, `touch_joystick_size`, `touch_joystick_type` | (empty) | Written by the rebinding screen; empty = original controls |
 
@@ -538,6 +540,8 @@ The Android APK is also built automatically by **GitHub Actions** (*Actions → 
 - **Artificial Intelligence** ([Claude](https://claude.ai), by Anthropic): development assistance.
 - **Edmund McMillen and Florian Himsl**: creators of *The Binding of Isaac*.
 - **[g333nza](https://github.com/g333nza)**: the original save converter.
+- **[HellRok](https://github.com/HellRok/IsaacRecomp)**: the port to the RG CubeXX, from which come OpenGL ES support,
+  `render_height` on PC, the reduced-memory atlas and the faster border overlay.
 - **[Ruffle](https://github.com/ruffle-rs/ruffle)**: reference for AVM1 semantics.
 - **[JPEXS FFDec](https://github.com/jindrapetrik/jpexs-decompiler)**: decompiler used by the tooling.
 - **[SDL2](https://www.libsdl.org/)**, **[PlutoVG](https://github.com/sammycage/plutovg)**,

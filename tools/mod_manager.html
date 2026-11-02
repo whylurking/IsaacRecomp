@@ -163,6 +163,20 @@
 "author": "IsaacRecomp"
 },
 {
+"file": "Continuum.mod",
+"id": "continuum",
+"name": "Continuum",
+"version": "1.0",
+"description": "Lets you stop a run and come back to it later. On the pause screen, \"Exit to main menu\" asks \"Are you sure you want me to die?\": \"Yes\" ends the run as always, and \"No\", in a room with no enemies left, saves the run and goes to the main menu. The next time you press Start there, you are back in that run, in that room, with everything you had. You appear in the middle of the room, or, if something is in the way (a rock, a pit, the trapdoor, an item), on the free spot nearest to the door you came in by. In a room with enemies, \"No\" does what it always did (back to the run). A click outside the note, or the controller's B / circle, takes you back to the pause screen. The run is kept in saves/continuum_<game>.txt until you carry on with it. Works with The Gone and BaseTime (the clocks carry on).",
+"warning": "",
+"help": "",
+"category": "Gameplay",
+"summary": "Leave a run and carry on with it later, as Rebirth's \"Continue\".",
+"options": [],
+"author": "IsaacRecomp",
+"engine": "continuum"
+},
+{
 "file": "GenesisConsole.mod",
 "id": "genesis",
 "name": "GenesisConsole",
@@ -195,6 +209,121 @@
 }
 ],
 "author": "IsaacRecomp"
+},
+{
+"file": "GoodSaac.mod",
+"id": "goodsaac",
+"name": "Good Saac",
+"version": "1.2",
+"description": "Fixes known bugs of the Flash games. In the original and Wrath of the Lamb: the wrong lines under some items' names when you pick them up (Sacred Heart said \"Tears Up\", MEAT! \"Tears + HP Up\"...), \"Magdalena\" and \"XXX\" in mini-boss banners, an Eternal Heart that didn't save ??? (or anyone with no heart containers left), Mom's Heart saying \"Isaac!\" over and over in its last phase. In every version: the challenge room's music going on after you leave the room by teleport or an extra life. Also: \"<3\" with no name in the collection, an empty picture in the death diary (Razor Blade, \"killed by nothing\"), pills for sale that change colour when bought, challenge waves coming all at once after a pause, a red screen that stays after Mom, The Gamekid leaving the head flipped, Daddy Longlegs stomping only once on bosses that don't move, Mom's or Satan's foot hurting you after they die, secrets unlocked by the wrong deed (Headless Horseman, The Chest with ??? and Eve), XL Depths' first boss treated as Mom, Forget Me Now turning the Cathedral into Sheol, two secrets per key on the secrets screen no sound when choosing a character with the keys, the devil / angel room door hidden after Mom, and the game freezing when no item is left to give (it gives Breakfast, as Rebirth does). Each fix can be turned off on its own.",
+"warning": "",
+"help": "",
+"category": "Fixes",
+"summary": "Fixes bugs of the original games, most of them the way Eternal Edition later did.",
+"options": [
+{
+"key": "subtitles",
+"value": "1",
+"note": "subtitles = 1 corrects the line under the name of 14 items (original and Wrath of the Lamb) (0: no)"
+},
+{
+"key": "names",
+"value": "1",
+"note": "names = 1 writes Magdalene and ??? in mini-boss banners (original and Wrath of the Lamb) (0: no)"
+},
+{
+"key": "eternal_heart",
+"value": "1",
+"note": "eternal_heart = 1 lets an Eternal Heart save a character with no heart containers, as in Eternal Edition (0: no)"
+},
+{
+"key": "mom_voice",
+"value": "1",
+"note": "mom_voice = 1 stops Mom's Heart / It Lives! repeating \"Isaac!\" many times in a row (0: no)"
+},
+{
+"key": "challenge_music",
+"value": "1",
+"note": "challenge_music = 1 stops the challenge room's music when you leave the room (0: no)"
+},
+{
+"key": "heart_name",
+"value": "1",
+"note": "heart_name = 1 shows the name of <3 in the collection (0: no)"
+},
+{
+"key": "last_will",
+"value": "1",
+"note": "last_will = 1 fills the death diary's empty pictures (Razor Blade, \"killed by nothing\") (0: no)"
+},
+{
+"key": "shop_pills",
+"value": "1",
+"note": "shop_pills = 1 shows pills for sale in the colour they have when you use them (0: no)"
+},
+{
+"key": "challenge_pause",
+"value": "1",
+"note": "challenge_pause = 1 stops challenge waves coming while the game is paused (0: no)"
+},
+{
+"key": "mom_red",
+"value": "1",
+"note": "mom_red = 1 puts the screen's colour back if you leave the room during Mom's red flash (0: no)"
+},
+{
+"key": "gamekid_head",
+"value": "1",
+"note": "gamekid_head = 1 turns the head back the right way when The Gamekid ends (0: no)"
+},
+{
+"key": "daddy_stomps",
+"value": "1",
+"note": "daddy_stomps = 1 lets Daddy Longlegs keep stomping bosses that don't move (0: no)"
+},
+{
+"key": "foot_shadow",
+"value": "1",
+"note": "foot_shadow = 1 stops Mom's and Satan's foot hurting you once they are dead (0: no)"
+},
+{
+"key": "mom_deals",
+"value": "1",
+"note": "mom_deals = 1 shows the devil / angel room door in Mom's room once she is dead (0: no)"
+},
+{
+"key": "breakfast",
+"value": "1",
+"note": "breakfast = 1 gives Breakfast when no item is left to give instead of freezing (0: no)"
+},
+{
+"key": "unlocks",
+"value": "1",
+"note": "unlocks = 1 unlocks the right secrets (Headless Horseman, The Chest with ??? / Eve) (0: no)"
+},
+{
+"key": "xl_depths",
+"value": "1",
+"note": "xl_depths = 1 makes XL Depths' first boss a normal boss, not Mom (0: no)"
+},
+{
+"key": "forget_me_now",
+"value": "1",
+"note": "forget_me_now = 1 keeps the Cathedral a Cathedral after Forget Me Now (0: no)"
+},
+{
+"key": "secrets_keys",
+"value": "1",
+"note": "secrets_keys = 1 moves one secret per arrow key on the secrets screen (0: no)"
+},
+{
+"key": "select_click",
+"value": "1",
+"note": "select_click = 1 plays the click when you change character with the keys (0: no)"
+}
+],
+"author": "IsaacRecomp",
+"engine": "goodsaac"
 },
 {
 "file": "Itemnomicon.mod",
@@ -376,8 +505,8 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var CATS = ['HUD', 'Screen', 'Characters', 'Cheats'];   // (in this order; others after them, then "Other")
-  var CAT_NAMES = { HUD: 'On screen info', Screen: 'Display', Characters: 'Characters', Cheats: 'Cheats', Other: 'Other mods' };
+  var CATS = ['HUD', 'Screen', 'Gameplay', 'Fixes', 'Characters', 'Cheats'];   // (in this order; others after them, then "Other")
+  var CAT_NAMES = { HUD: 'On screen info', Screen: 'Display', Gameplay: 'Gameplay', Characters: 'Characters', Cheats: 'Cheats', Fixes: 'Bug fixes', Other: 'Other mods' };
   function mk(m) {
     return { id: m.id, name: m.name || m.id, version: m.version || '', category: m.category || 'Other', summary: m.summary || '',
              description: m.description || '', warning: m.warning || '', help: m.help || '', on: false,
