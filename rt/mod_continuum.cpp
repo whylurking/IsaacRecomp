@@ -6,8 +6,8 @@
 //     The next "Start" there goes straight back into that run, in that room. In a room with enemies "No" does what it
 //     always did (back to the pause screen);
 //   - a click anywhere else, Escape or the controller's B / circle: back to the pause screen, as before.
-// The resumed run starts with the player on the room's centre tile, or, when something is there (a rock, a pit, the
-// trapdoor, an item...), on the free tile nearest to the door he came in by.
+// The resumed run starts with the player in front of the door he last came in by (or in the middle of a floor's first
+// room while no other room has been visited); when something is there now, on the free tile nearest to it.
 //
 // How: the game keeps everything about a run in _root's variables (the floor's rooms in _root.levz, what is left in
 // each room in levit / levsav, the items in ups, hearts, coins...); each room is built again from them when the
@@ -40,6 +40,7 @@ extern bool (*g_buttonReleaseHook)(ButtonObj* b);   // display.cpp: a click on a
 extern int g_menuNavClick;                          // menuui.cpp: the click is the mouse's (0), the controller's A (1) or B (2)
 // other mods' runs (mod_thegone.cpp, mod_basetime.cpp)
 bool goneRunActive();
+extern uint32_t g_startKeyTick;   // display.cpp
 void goneResume(bool gone);
 std::string basetimeSuspend();
 void basetimeResume(const std::string& s);
@@ -73,6 +74,8 @@ const std::set<std::string> kNotRun = {
 std::set<std::string> s_sysKeys;   // _root's variables when the main menu first showed, before any run: the program's, not a run's
 bool notRun(Str* k) {
     if (k->s == "hardmode") return false;   // (Eternal: read from the save at start, but set for the run on the character select)
+    if (k->s == "skiner") return false;     // (the run's character: set on the menu, but the run's own - the ring may show
+                                            //  another one by then, and his hearts are worked out from it every image)
     if (kNotRun.count(k->s) || s_sysKeys.count(k->s)) return true;
     const std::string& s = k->s;   // (the scripts' scratch variables: f1, v2, e, z...)
     if (s == "e" || s == "z" || s == "tex") return true;
@@ -188,7 +191,7 @@ struct Reader {
 bool roomClear(const Value& a) {
     return num(V(a, "shutdoor"), 1) == 0 && num(V(a, "ashut"), 1) == 0 && num(V(a, "fra")) > 30 && num(V(a, "gameover")) == 0;
 }
-// where the player will appear: the centre tile, or the free one nearest to the way he came in
+// where the player will appear (worked out when the run is saved)
 void spawnPoint(const Value& a, double& sx, double& sy) {
     Value lz = V(a, "levz"), ball = V(a, "ball");
     auto tileFree = [&](int t) {
@@ -204,10 +207,19 @@ void spawnPoint(const Value& a, double& sx, double& sy) {
             }
         return true;
     };
-    const int cx = 8, cy = 7;   // (320, 280): the middle of the room
-    if (tileFree(cx + 16 * cy)) { sx = 320; sy = 280; return; }
-    // the way in: where the game put the player when he came in (_root.playerx / playery, next to that door)
-    double dx = num(V(root(), "playerx"), 320), dy = num(V(root(), "playery"), 400);
+    // where: in front of the door he came in by (where the game put him then: _root.playerx / playery, the space
+    // just inside that door), or the middle of the room in a floor's first room when no other room has been visited
+    Value R = root(), been = V(R, "beenlev");
+    int lev = (int)num(V(R, "lev"), -1), visited = 0;
+    if (been.isObj() && been.o->kind == OK_ARRAY) {
+        auto& el = ((Array*)been.o)->el;
+        for (size_t i = 0; i < el.size(); i++) if (truthy(el[i]) && (int)i != lev) visited++;
+    }
+    double dx = num(V(R, "playerx"), 0), dy = num(V(R, "playery"), 0);
+    if (visited == 0 || dx <= 0 || dy <= 0) { dx = 320; dy = 280; }
+    int t0 = (int)std::lround(dx / 40) + 16 * (int)std::lround(dy / 40);
+    if (tileFree(t0)) { sx = dx; sy = dy; return; }
+    // something is there now (a rock pushed, an item dropped...): the free tile nearest to it
     double best = 1e30; sx = 320; sy = 400;
     for (int ty = 4; ty <= 10; ty++)
         for (int tx = 2; tx <= 14; tx++) {
@@ -281,7 +293,22 @@ Saved readSave() {
 }
 bool hasSave() { FILE* f = platformFopen(savePath(), "rb"); if (!f) return false; fclose(f); return true; }
 
-int s_resume = 0;   // 1: resumed on the menu, waiting for the game's frame; 2: waiting for the run to be playable
+uint32_t s_resumes = 0;   // runs resumed so far (Challenge Lab: the run's restart that follows is not a new start)
+int s_resume = 0;
+// the run's character: the game takes it from the character select's ring as the run starts, and the ring may show
+// another one (a Challenge Lab run is not chosen there; the ring may have been turned since): until the menu has
+// faded out, the ring and _root.skiner are held at the saved run's character every tick, as the ring does
+int s_skiner = -1;
+void keepCharacter() {
+    if (s_skiner < 0) return;
+    Value R = root(), cha = V(V(V(R, "men"), "men"), "cha");
+    int ring = s_skiner;
+    Value lk = V(R, "locker");
+    bool seven = lk.isObj() && truthy(getMem(lk, Value(41.0)));   // (??? on the ring: Samson is the 7th)
+    if (s_skiner == 5) ring = 4; else if (s_skiner == 4) ring = 5; else if (s_skiner == 6) ring = seven ? 6 : 5;
+    if (cha.isObj()) S(cha, "skiner", Value((double)ring));
+    S(R, "skiner", Value((double)s_skiner));
+}   // 1: resumed on the menu, waiting for the game's frame; 2: waiting for the run to be playable
 Saved s_saved;
 bool resumeRun() {
     Saved s = readSave();
@@ -298,12 +325,15 @@ bool resumeRun() {
     }
     if (rd.bad) { logf("continuum: the saved run can't be read: a new run\n"); platformRemove(savePath()); return true; }
     for (auto& kv : vals) setMemK(R, kv.first, kv.second);   // (no collection can run before they are in _root)
+    s_skiner = V(R, "skiner").t == T_NUM ? (int)num(V(R, "skiner")) : -1;
+    keepCharacter();
     S(R, "door", VUNDEF);   // (no door: the room doesn't slide in)
     S(R, "playerx", Value(s.sx)); S(R, "playery", Value(s.sy));
     S(R, "newstartt", VFALSE);
     platformRemove(savePath());
     logf("continuum: run resumed (floor %g, room %g, %zu variables)\n", num(V(R, "chaps")), num(V(R, "lev")), vals.size());
     s_saved = s;
+    s_resumes++;
     return true;
 }
 
@@ -332,9 +362,11 @@ bool onNoWord(double mx, double my) {
     }
     return false;
 }
+uint32_t s_menuClickTick = 0;   // the last click on one of the main menu's own buttons (Start among them)
 bool s_leave = false;   // "No" was chosen in a clear room: the run is saved and left this tick
 bool onRelease(ButtonObj* b) {   // (display.cpp: a click on a button, before its actions; logic thread)
     if (!modActive("continuum") || !b || !b->parent) return false;
+    { DisplayObject* p = b->parent; if (p->name && p->name->s == "men" && p->parent && p->parent->name && p->parent->name->s == "men") s_menuClickTick = g_player.tick; }
     Value ps = pauseSheet();
     if (!ps.isObj() || (DisplayObject*)ps.o != b->parent || curFrame(ps) != 6 || !keyButton(b, 19)) return false;
     bool inGame = false, play = recompInGameplay(&inGame);
@@ -349,6 +381,7 @@ bool onRelease(ButtonObj* b) {   // (display.cpp: a click on a button, before it
 }
 }  // namespace
 
+uint32_t continuumResumes() { return s_resumes; }
 void continuumDebug(const std::string& cmd) {
     if (cmd == "keys") {   // _root's variables: what would be saved
         for (auto& p : vm.root->props.v) {
@@ -395,7 +428,10 @@ void continuumTick(const ModInfo&) {
         Value sheet = V(V(R, "men"), "men");
         Value pv = V(sheet, "pos");
         int pos = pv.isUndef() ? -1 : (int)num(pv, -2);
-        if (s_resume == 0 && pos == 3 && s_lastPos == -1 && hasSave()) { if (resumeRun()) s_resume = 1; }
+        // (only the main menu's own Start: a click on it, Enter / Space / Right on the menu, just before the ring shows)
+        bool asked = g_player.tick - s_menuClickTick <= 3 || g_player.tick - g_startKeyTick <= 3;
+        if (s_resume == 0 && pos == 3 && s_lastPos == -1 && asked && hasSave()) { if (resumeRun()) s_resume = 1; }
+        else if (s_resume == 1) keepCharacter();
         s_lastPos = pos;
     } else s_lastPos = -100;
     if (s_resume == 1 && frame != 5) {

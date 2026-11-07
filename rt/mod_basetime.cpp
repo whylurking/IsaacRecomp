@@ -34,6 +34,7 @@
 
 namespace fl {
 bool recompInGameplay(bool* inGame);
+bool clabRunActive();   // mod_challengelab.cpp
 
 namespace {
 Value V(const Value& o, const char* k) { return o.isObj() ? getMemK(o, intern(k)) : VUNDEF; }
@@ -92,6 +93,11 @@ void save() {
     fclose(f);
 }
 void finish() {
+    if (clabRunActive()) {   // (Challenge Lab: a run apart, not recorded)
+        logf("basetime: a Challenge Lab run: not recorded\n");
+        s_running = false; s_result = R_NONE; s_endGame = s_endTotal = -1; s_runEnding = 0;
+        return;
+    }
     s_lastMs[T_GAME] = nowGame(); s_lastMs[T_TOTAL] = nowTotal();
     s_lastResult = s_runEnding ? R_WIN : R_DEATH;   // (an ending reached: a win; died or left: died)
     if (s_runEnding)

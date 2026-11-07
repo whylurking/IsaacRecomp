@@ -5,8 +5,10 @@
 // secret-card animation, _root.unl) and listed with the game's found secrets (menu, _root.lockor while the menus show):
 //   Mom's Heart          -> Negative Isaac (a card): a 15-second shield, as Book of Shadows (the game's playsave)
 //   Mom's Heart, with no item but the starting one -> Nothing (treasure rooms): non-boss enemies may vanish (10%)
-//   Isaac (Cathedral)    -> The Void Shard (devil rooms): enemy shots miss 25%; when hurt, 5%: 50 damage to the room
-//   Satan (Sheol)        -> Black Mirror (treasure rooms, active, 3 charges): the room in negative, enemies fight
+//   Isaac (Cathedral)    -> The Void Shard (devil rooms): enemy shots go through you 25%; when hurt, 5%: 50
+//                           damage to the room
+//   Satan (Sheol)        -> Black Mirror (treasure rooms, active, 3 charges): the room in negative, half the
+//                           enemies turned round, the others going for each other (see wAi)
 // Kept in saves/thegone_<game>.txt (never in the game's save). With GenesisConsole on nothing unlocks; its "unlock"
 // command unlocks everything until the game is closed.
 //
@@ -30,14 +32,17 @@ const int kSecret0 = 150;
 inline int itemIndex(double it) { for (int k = 0; k < 3; k++) if (it == kItemId[k]) return k; return -1; }
 
 // ---- saved state
-struct UnlState { bool saved[U_N] = {}, session[U_N] = {}, coll[3] = {}; bool loaded = false; std::string game; };
+struct UnlState { bool saved[U_N] = {}, session[U_N] = {}, coll[3] = {}, collSession[3] = {}; bool loaded = false; std::string game; };
 UnlState g_u;
 std::string unlFile() { return g_modsSaveDir + "thegone_" + game() + ".txt"; }
 void unlLoad() {
     if (g_u.loaded && g_u.game == game()) return;
-    bool sess[U_N]; for (int i = 0; i < U_N; i++) sess[i] = g_u.game == game() && g_u.session[i];
+    bool sess[U_N], csess[3];
+    for (int i = 0; i < U_N; i++) sess[i] = g_u.game == game() && g_u.session[i];
+    for (int j = 0; j < 3; j++) csess[j] = g_u.game == game() && g_u.collSession[j];
     g_u = UnlState(); g_u.loaded = true; g_u.game = game();
     for (int i = 0; i < U_N; i++) g_u.session[i] = sess[i];
+    for (int j = 0; j < 3; j++) g_u.collSession[j] = csess[j];
     FILE* f = platformFopen(unlFile(), "rb");
     if (!f) return;
     char buf[256];
@@ -62,7 +67,9 @@ void unlSave() {
     bool ok = fclose(f) == 0;
     if (ok) platformReplaceFile(tmp, unlFile());
 }
-bool unlocked(int i) { unlLoad(); return g_u.saved[i] || g_u.session[i]; }
+// (a Challenge Lab run: everything as unlocked, in The Gone's pools too)
+bool unlocked(int i) { unlLoad(); return g_u.saved[i] || g_u.session[i] || clabRunActive(); }
+bool collected(int k) { unlLoad(); return g_u.coll[k] || g_u.collSession[k]; }   // (in the collection)
 std::vector<int> g_popups;   // unlock cards waiting to be shown
 void unlock(int i) {
     if (unlocked(i) || g_saveLocked) return;
@@ -168,7 +175,7 @@ uint16_t g_itemSprite = 0;      // the items' pictures (frame = item number), as
 uint16_t g_portraitShape = 0;   // Isaac on the character select ring (grey drawing)
 uint16_t g_playerSprite = 0;    // the player
 uint16_t g_sketchSprite = 0;   // the items as grey drawings (collection, pause list, death diary)
-void learnItemSprite(MovieClip* c) { if (!g_itemSprite && c && c->def && c->def->nframes >= 100 && c->def->nframes < 260) g_itemSprite = c->charId; }
+void learnItemSprite(MovieClip* c) { if (!g_itemSprite && c && c->def && c->def->nframes >= 100 && c->def->nframes < 260) { g_itemSprite = c->charId; if (getenv("ISAAC_GONELOG")) logf("thegone: items sprite %d (%d frames)\n", (int)c->charId, (int)c->def->nframes); } }
 void learnSketchSprite(MovieClip* c) { if (!g_sketchSprite && c && c->def && c->def->nframes >= 100) g_sketchSprite = c->charId; }
 
 MovieClip* newArt() { MovieClip* c = newDetachedClip(); return c; }
@@ -405,6 +412,10 @@ void pictureTick() {
     }
     // the HUD's active item while the Black Mirror is held (its clip goes by the game's short numbers)
     Value d = V(V(V(root(), "hud"), "it"), "d");
+    // (held from the start of a run - a Challenge Lab one - the game hasn't sent the HUD's clip to its number yet: it
+    // only does when an active item is picked up or used)
+    if (d.isObj() && d.o->kind == OK_CLIP && num(V(root(), "it")) == kMirrorShort && ((MovieClip*)d.o)->reqFrame != kMirrorShort)
+        gotoFrame((MovieClip*)d.o, kMirrorShort, true);
     if (d.isObj() && d.o->kind == OK_CLIP && num(V(root(), "it")) == kMirrorShort && ((MovieClip*)d.o)->reqFrame == kMirrorShort && g_itemSprite) {
         MovieClip* c = (MovieClip*)d.o;
         auto it = g_hijack.find(c);
@@ -453,28 +464,112 @@ void floorDone(const char* why) {
     if (g_t.streak >= 3) unlock(U_GONE);
 }
 
-Wrap g_wAi{"aistuff"};
+// ---- Black Mirror: while it lasts, each enemy's own code (the game's aistuff: one pass over every thing in the room,
+// each one's behaviour with `player` as its target) runs with another target, so they move, jump and shoot as their
+// kind does: half of them (at least one) are turned round - their target is the player's mirror image through them,
+// so what came for him goes the other way and what kept away comes - and the others go for the nearest other enemy
+// (a new one every two seconds). The target is set per enemy by wrapping deathscripts, the first thing aistuff calls
+// for each; the real player is put back for everything else and after the pass. Their touches and shots hurt the
+// enemies they go for (the game's own hits only know the player).
 int g_mirrorT = 0; Object* g_mirrorA = nullptr;
-// Black Mirror: while it lasts, the enemies' own code (aistuff) runs with `player` set to one of them - the game's
-// own decoy mechanism (rply / decer) - so they chase and shoot it instead of Isaac; the target moves round every second
+struct MirrorRev { bool turned; Object* target = nullptr; uint32_t since = 0; };
+std::map<Object*, MirrorRev> g_mirrorRev;
+Object* g_mirrorDecoy = nullptr;   // (the turned ones' target: a copy of the player's variables at the mirrored place)
+Value g_aiPlayer;                  // the real player during aistuff (undefined outside it)
+Value g_aiPlayx, g_aiPlayy;        // and the place the walkers' pathfinding heads for (a.playx / playy: where he last
+                                   // stood on a free tile - flying over a rock, it stays put, and they stopped there)
+bool g_aiDecoyed = false;          // the current thing in aistuff has another target
+Wrap g_wAi{"aistuff"}, g_wDs{"deathscripts"};
+std::vector<Value> enemies(const Value& a);
+bool mirrorOn(const Value& a) { return g_mirrorT > 0 && g_mirrorA == a.o && !truthy(V(a, "rply")); }
 Value wAi(Act& ac, Value thisv, int argc, Value* argv) {
     Value a((Object*)g_wAi.a);
-    if (g_mirrorT <= 0 || g_mirrorA != a.o || truthy(V(a, "rply"))) return callOrig(g_wAi, ac, thisv, argc, argv);
-    Value balls = V(a, "ball"); std::vector<Value> en;
-    if (balls.isObj() && balls.o->kind == OK_ARRAY)
-        for (const Value& b : ((Array*)balls.o)->el) if (b.isObj() && num(V(b, "s")) >= 10 && !truthy(V(b, "dones")) && num(V(b, "hp")) > 0) en.push_back(b);
-    if (en.size() < 2) return callOrig(g_wAi, ac, thisv, argc, argv);
-    Value player = V(a, "player"), target = en[(g_player.tick / 30) % en.size()];
-    S(a, "player", target);
+    if (!mirrorOn(a)) return callOrig(g_wAi, ac, thisv, argc, argv);
+    Value player = V(a, "player");
+    g_aiPlayer = player; g_aiPlayx = V(a, "playx"); g_aiPlayy = V(a, "playy");
     Value r = callOrig(g_wAi, ac, thisv, argc, argv);
-    S(a, "player", player);
+    S(a, "player", player); S(a, "playx", g_aiPlayx); S(a, "playy", g_aiPlayy);
+    g_aiPlayer = VUNDEF; g_aiDecoyed = false;
+    return r;
+}
+Value wDs(Act& ac, Value thisv, int argc, Value* argv) {
+    Value r = callOrig(g_wDs, ac, thisv, argc, argv);
+    Value a((Object*)g_wDs.a);
+    if (g_aiPlayer.isUndef() || !mirrorOn(a)) return r;
+    Value trg = V(a, "trg"), player = g_aiPlayer;
+    auto it = trg.isObj() ? g_mirrorRev.find(trg.o) : g_mirrorRev.end();
+    if (it == g_mirrorRev.end() || num(V(trg, "hp")) <= 0) {
+        S(a, "player", player); S(a, "playx", g_aiPlayx); S(a, "playy", g_aiPlayy); g_aiDecoyed = false;
+        return r;
+    }
+    Value target;
+    if (it->second.turned) {
+        if (!g_mirrorDecoy) { g_mirrorDecoy = gcNew<Object>(protos::object); gcAddRoot((GcObj**)&g_mirrorDecoy); }
+        Value d((Object*)g_mirrorDecoy);
+        for (auto& pr : player.o->props.v) if (pr.v.t != T_OBJ) setMemK(d, pr.k, pr.v);   // (his numbers: hp, speed...)
+        double ex = num(V(trg, "xp")), ey = num(V(trg, "yp")), px = num(V(player, "xp")), py = num(V(player, "yp"));
+        double mx = std::max(40.0, std::min(600.0, 2 * ex - px)), my = std::max(140.0, std::min(430.0, 2 * ey - py));
+        S(d, "xp", Value(mx)); S(d, "yp", Value(my)); S(d, "_x", Value(mx)); S(d, "_y", Value(my));
+        target = d;
+    } else if (it->second.target) target = Value(it->second.target);
+    else target = player;
+    S(a, "player", target);
+    g_aiDecoyed = target.o != player.o;
+    {   // the walkers' goal: the target's place, on the nearest free tile (their pathfinding needs one)
+        double tx = num(V(target, "xp")), ty = num(V(target, "yp"));
+        Value lz = V(a, "levz");
+        auto freeTile = [&](int t) {
+            if (!lz.isObj() || lz.o->kind != OK_ARRAY || t < 0) return true;
+            auto& el = ((Array*)lz.o)->el;
+            return t >= (int)el.size() || el[t].isUndef() || num(el[t]) == 0;
+        };
+        int bx = (int)std::lround(tx / 40), by = (int)std::lround(ty / 40);
+        double best = 1e18, gx = tx, gy = ty;
+        for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {
+            int cx = bx + dx, cy = by + dy;
+            if (cx < 2 || cx > 14 || cy < 4 || cy > 10 || !freeTile(cx + 16 * cy)) continue;
+            double d = (cx * 40.0 - tx) * (cx * 40.0 - tx) + (cy * 40.0 - ty) * (cy * 40.0 - ty);
+            if (d < best) { best = d; gx = cx * 40.0; gy = cy * 40.0; }
+        }
+        if (!g_aiDecoyed) { gx = num(g_aiPlayx, gx); gy = num(g_aiPlayy, gy); }
+        S(a, "playx", Value(gx)); S(a, "playy", Value(gy));
+    }
     return r;
 }
 Wrap g_wHurt{"playerhurt"}, g_wPower{"powerlevel"}, g_wTater{"tater"}, g_wTart{"tart"};
 bool ownsItem(int k) { Value ups = V(root(), "ups"); return num(arrGet(ups, kItemId[k])) > 0; }
 Value wHurt(Act& ac, Value thisv, int argc, Value* argv) {
-    // The Void Shard: an enemy shot (source 4) misses one time in four
-    if (ownsItem(0) && argc > 1 && num(argv[1]) == 4 && rnd(4) == 0) { if (getenv("ISAAC_GONELOG")) logf("thegone: Void Shard: a shot missed\n"); return VUNDEF; }
+    if (g_aiDecoyed) return VUNDEF;   // (Black Mirror: an enemy going for something else doesn't hurt him by its moves)
+    // The Void Shard: an enemy shot misses one time in four. (A shot's hit names the enemy that fired it, as a touch
+    // does: it is a shot when one of the enemies' shots - s 9 - is on him.) The game asks again every image the shot
+    // still touches him (it is only gone once it hits), so a shot that missed goes on missing until it has gone
+    // through: the shots touching him then are remembered, and a hit with only those on him is no hit
+    if (ownsItem(0)) {
+        static std::map<Object*, uint32_t> through;   // (and when it missed: forgotten after two seconds)
+        Value a((Object*)g_wHurt.a), p = V(a, "player"), balls = V(a, "ball");
+        double px = num(V(p, "xp")), py = num(V(p, "yp"));
+        std::vector<Object*> touching;
+        if (balls.isObj() && balls.o->kind == OK_ARRAY)
+            for (const Value& b : ((Array*)balls.o)->el) {
+                if (!b.isObj() || num(V(b, "s")) != 9 || truthy(V(b, "done"))) continue;
+                double dx = num(V(b, "xp")) - px, dy = num(V(b, "yp")) - py;
+                if (dx * dx + dy * dy < 30 * 30) touching.push_back(b.o);
+            }
+        std::map<Object*, uint32_t> still;
+        for (auto& t : through)
+            if (g_player.tick - t.second < 60 && std::find(touching.begin(), touching.end(), t.first) != touching.end()) still.insert(t);
+        through.swap(still);
+        if (!touching.empty()) {
+            bool known = true;
+            for (Object* o : touching) known &= through.count(o) > 0;
+            if (known) return VUNDEF;   // (one that already missed him, going through)
+            if (rnd(4) == 0) {
+                for (Object* o : touching) through[o] = g_player.tick;
+                if (getenv("ISAAC_GONELOG")) logf("thegone: Void Shard: a shot missed\n");
+                return VUNDEF;
+            }
+        }
+    }
     Value r = callOrig(g_wHurt, ac, thisv, argc, argv);
     if (truthy(r)) {
         g_t.clean = false;
@@ -491,7 +586,7 @@ Value wPower(Act& ac, Value thisv, int argc, Value* argv) {
     if (k < 0 || wasEmpty || !truthy(V(highs, "empty"))) return r;
     // picked up: the collection is the mod's (the game's save keeps its own items only)
     if (colss.isObj()) setMem(colss, Value((double)kItemId[k]), before);
-    if (!g_u.coll[k]) { g_u.coll[k] = true; unlSave(); }
+    if (!g_u.coll[k] && !clabRunActive()) { g_u.coll[k] = true; unlSave(); }   // (not in a Challenge Lab run)
     if (k != 1) return r;
     // Black Mirror: an active item. The game took it as a passive one (collection list, its count): it is made the
     // held active item as the game does for its own (the one held before goes back on the pedestal)
@@ -580,7 +675,7 @@ void effectsTick(const Value& a, bool play) {
     }
     Value itc = V(a, "itc");
     if (itc.isObj() && num(arrGet(itc, kMirrorShort)) != 3) setMem(itc, Value((double)kMirrorShort), Value(3.0));
-    hookFn(g_wHurt, a, wHurt); hookFn(g_wAi, a, wAi); hookFn(g_wGive, a, wGive); hookFn(g_wPower, a, wPower); hookFn(g_wTater, a, wTater); hookFn(g_wTart, a, wTart);
+    hookFn(g_wHurt, a, wHurt); hookFn(g_wGive, a, wGive); hookFn(g_wPower, a, wPower); hookFn(g_wAi, a, wAi); hookFn(g_wDs, a, wDs); hookFn(g_wTater, a, wTater); hookFn(g_wTart, a, wTart);
     // the pools: each unlocked item, until seen this run
     static bool seen[3]; static uint32_t seenSerial = 0xffffffffu;
     if (seenSerial != modsRunSerial()) { seenSerial = modsRunSerial(); for (bool& s : seen) s = false; }
@@ -625,25 +720,34 @@ void effectsTick(const Value& a, bool play) {
         double k = std::min(1.0, g_mirrorT / 30.0);
         SnapOv& o = g_snapOv[(DisplayObject*)a.o];
         o.hasCx = true; o.cx = CX(); float m = (float)(1 - 2 * k); o.cx.rm = o.cx.gm = o.cx.bm = m; o.cx.ra = o.cx.ga = o.cx.ba = (float)(255 * k);
-        // the enemies go for each other
+        // who does what: each enemy once (half turned round, at least one); the others' targets
         std::vector<Value> en = enemies(a);
-        for (size_t i = 0; i < en.size(); i++) {
-            double x = num(V(en[i], "xp")), y = num(V(en[i], "yp")), bd = 1e18; int bj = -1;
-            for (size_t j = 0; j < en.size(); j++) if (j != i) { double dx = num(V(en[j], "xp")) - x, dy = num(V(en[j], "yp")) - y, d2 = dx * dx + dy * dy; if (d2 < bd) { bd = d2; bj = (int)j; } }
-            if (bj < 0) continue;
-            double dx = num(V(en[bj], "xp")) - x, dy = num(V(en[bj], "yp")) - y, d = std::sqrt(bd);
-            // (the ones that walk: their whole movement turned towards the nearest other one, at least at a walk -
-            // they no longer go for the player; the ones standing still stay put, and shots still aim at him)
-            double vx = num(V(en[i], "xbew")), vy = num(V(en[i], "ybew")), sp = std::sqrt(vx * vx + vy * vy);
-            if (d > 1 && sp > 0.15) { sp = std::max(sp, 1.6); S(en[i], "xbew", Value(dx / d * sp)); S(en[i], "ybew", Value(dy / d * sp)); }
-            // (touching each other hurts, as touching Isaac does: every other enemy it touches, twice a second)
-            if ((g_player.tick + i) % 15 == 0)
-                for (size_t j = 0; j < en.size(); j++) if (j != i) {
-                    double ex = num(V(en[j], "xp")) - x, ey = num(V(en[j], "yp")) - y;
-                    if (ex * ex + ey * ey < 36 * 36) call(a, "hurt", {en[j], Value(10.0)});
-                }
+        bool any = false;
+        for (const Value& e : en) {
+            auto it = g_mirrorRev.find(e.o);
+            if (it == g_mirrorRev.end()) { MirrorRev m; m.turned = rnd(2) == 0; it = g_mirrorRev.insert({e.o, m}).first; }
+            any |= it->second.turned;
         }
-        // their shots (s 9) hurt the enemies they hit (not the one that just fired: a few ticks old)
+        if (!any && !en.empty()) g_mirrorRev[en[0].o].turned = true;
+        auto alive = [&](Object* o) { for (const Value& e : en) if (e.o == o) return true; return false; };
+        for (const Value& e : en) {
+            MirrorRev& m = g_mirrorRev[e.o];
+            if (m.turned) continue;
+            if (m.target && alive(m.target) && g_player.tick - m.since < 60) continue;
+            double x = num(V(e, "xp")), y = num(V(e, "yp")), bd = 1e18; m.target = nullptr;
+            for (const Value& o : en) if (o.o != e.o) { double dx = num(V(o, "xp")) - x, dy = num(V(o, "yp")) - y; if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; m.target = o.o; } }
+            if (!m.target) m.turned = true;   // (alone: turned round)
+            m.since = g_player.tick;
+        }
+        // their hits on each other: touching the one it goes for (twice a second), and the enemies' shots (s 9) hitting
+        // an enemy other than the one that fired them (a few images old: away from it)
+        for (size_t i = 0; i < en.size(); i++) {
+            MirrorRev& m = g_mirrorRev[en[i].o];
+            if (m.turned || !m.target || (g_player.tick + i) % 15 != 0) continue;
+            Value t(m.target);
+            double dx = num(V(t, "xp")) - num(V(en[i], "xp")), dy = num(V(t, "yp")) - num(V(en[i], "yp"));
+            if (dx * dx + dy * dy < 34 * 34) call(a, "hurt", {t, Value(3.5)});
+        }
         static std::map<Object*, uint32_t> born;
         Value balls = V(a, "ball");
         if (balls.isObj() && balls.o->kind == OK_ARRAY) {
@@ -651,16 +755,16 @@ void effectsTick(const Value& a, bool play) {
             for (const Value& b : ((Array*)balls.o)->el) {
                 if (!b.isObj() || num(V(b, "s")) != 9 || truthy(V(b, "done"))) continue;
                 auto it = born.find(b.o); uint32_t t0 = it == born.end() ? g_player.tick : it->second; now[b.o] = t0;
-                if (g_player.tick - t0 < 5) continue;
+                if (g_player.tick - t0 < 6) continue;
                 double x = num(V(b, "xp")), y = num(V(b, "yp"));
                 for (const Value& e : en) {
                     double dx = num(V(e, "xp")) - x, dy = num(V(e, "yp")) - y;
-                    if (dx * dx + dy * dy < 18 * 18) { call(a, "hurt", {e, Value(3.5)}); S(b, "done", VTRUE); break; }
+                    if (dx * dx + dy * dy < 20 * 20) { call(a, "hurt", {e, Value(3.5)}); S(b, "done", VTRUE); break; }
                 }
             }
             born.swap(now);
         }
-    } else g_mirrorA = nullptr;
+    } else { g_mirrorA = nullptr; g_mirrorRev.clear(); }
     // The Void Shard: 50 damage to every enemy in the room (after a hit)
     if (g_t.burst) {
         g_t.burst = false;
@@ -767,7 +871,7 @@ void collectionTick() {
         sx[k] = ref->m.tx + ddx; sy[k] = ref->m.ty + ddy;
     }
     unlLoad();
-    std::string key = std::to_string(last->charId) + (g_u.coll[0] ? "1" : "0") + (g_u.coll[1] ? "1" : "0") + (g_u.coll[2] ? "1" : "0");
+    std::string key = std::to_string(last->charId) + (collected(0) ? "1" : "0") + (collected(1) ? "1" : "0") + (collected(2) ? "1" : "0");
     if (!g_collArt || g_collCol != (Object*)col || key != g_collKey) {
         if (!g_collArt) gcAddRoot((GcObj**)&g_collArt), gcAddRoot((GcObj**)&g_collCol);
         g_collArt = newArt(); g_collCol = col; g_collKey = key;
@@ -775,7 +879,7 @@ void collectionTick() {
             MovieClip* s = createEmptyMovieClip(g_collArt, intern(("s" + std::to_string(k)).c_str()), k + 1);
             if (!s) continue;
             s->m = last->m; s->m.tx = sx[k]; s->m.ty = sy[k]; s->scriptXform = true;
-            if (g_u.coll[k]) { if (DisplayObject* a = itemArt(k, last->charId, true)) { a->depth = 1 + DEPTH_BIAS; a->parent = s; s->insertChild(a); } }
+            if (collected(k)) { if (DisplayObject* a = itemArt(k, last->charId, true)) { a->depth = 1 + DEPTH_BIAS; a->parent = s; s->insertChild(a); } }
             else if (DisplayObject* q = synthPut(s, last->charId, 1, 0, 0)) { if (q->kind == OK_CLIP) gotoFrame((MovieClip*)q, 201, true); }
         }
     }
@@ -793,7 +897,7 @@ void collectionTick() {
             g_collRects.push_back(r);
         }
         if (getenv("ISAAC_GONELOG")) { static size_t last = 99; if (ex.size() != last) { last = ex.size(); logf("thegone: %zu collection slots for the controller\n", ex.size()); for (auto& e : ex) logf("thegone:   %.0f,%.0f-%.0f,%.0f\n", e.second.x0, e.second.y0, e.second.x1, e.second.y1); RectF lb = stageBounds(slot[n]); logf("thegone:   last %.0f,%.0f-%.0f,%.0f\n", lb.x0, lb.y0, lb.x1, lb.y1); } }
-        menuSetExtras(ex);
+        menuSetExtras("thegone", ex);
     }
     // pointing at one of them (the mouse, or the controller's selection, which moves it): the large picture and the
     // name, after the game set its own
@@ -806,10 +910,10 @@ void collectionTick() {
             gotoFrame(ic, 199, true);   // (empty; the picture is the mod's: frame 230+ is something else in that sprite)
             static DisplayObject* big[3] = {}; static uint16_t bigFor = 0;
             if (bigFor != ic->charId) { bigFor = ic->charId; for (auto& b : big) b = nullptr; }
-            if (g_u.coll[k] && !big[k] && k != 2) big[k] = itemArt(k, ic->charId, true);
-            if (g_u.coll[k]) { SnapOv& o = g_snapOv[ic]; o.hideKids = true; o.extra = big[k]; }
+            if (collected(k) && !big[k] && k != 2) big[k] = itemArt(k, ic->charId, true);
+            if (collected(k)) { SnapOv& o = g_snapOv[ic]; o.hideKids = true; o.extra = big[k]; }
         }
-        S(sheet, "ittz", Value(mkstr(g_u.coll[k] ? kItemName[k] : "?")));
+        S(sheet, "ittz", Value(mkstr(collected(k) ? kItemName[k] : "?")));
         updateBoundTexts();   // (its text field shows it now: the game's own update ran before this)
         // (selected: red, as the game's own slots)
         if (MovieClip* sc = (MovieClip*)g_collArt->childByName(intern(("s" + std::to_string(k)).c_str()))) {
