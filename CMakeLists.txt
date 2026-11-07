@@ -144,9 +144,14 @@ foreach(_m ${BUILTIN_MODS})
 endforeach()
 file(WRITE ${CMAKE_BINARY_DIR}/gen_inc/mods_builtin.inc.tmp "${_mods_inc}")
 configure_file(${CMAKE_BINARY_DIR}/gen_inc/mods_builtin.inc.tmp ${CMAKE_BINARY_DIR}/gen_inc/mods_builtin.inc COPYONLY)   # (only rewritten when it changes)
+# Challenge Lab's challenges that come with the program (mods/customchallenges.txt), written into a mods folder with none
+file(READ ${CMAKE_SOURCE_DIR}/mods/customchallenges.txt _clab)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/mods/customchallenges.txt)
+file(WRITE ${CMAKE_BINARY_DIR}/gen_inc/clab_bundle.inc.tmp "R\"__CLAB__(${_clab})__CLAB__\"\n")
+configure_file(${CMAKE_BINARY_DIR}/gen_inc/clab_bundle.inc.tmp ${CMAKE_BINARY_DIR}/gen_inc/clab_bundle.inc COPYONLY)
 include_directories(${CMAKE_BINARY_DIR}/gen_inc)
 
-set(RT_SRC rt/core.cpp rt/display.cpp rt/builtins.cpp rt/swfload.cpp rt/raster.cpp rt/render.cpp rt/snapshot.cpp rt/patches.cpp rt/platform.cpp rt/audio.cpp rt/main.cpp rt/debug.cpp rt/touch.cpp rt/controls.cpp rt/menuui.cpp rt/mods.cpp rt/mod_staton.cpp rt/mod_genesis.cpp rt/mod_widesaac.cpp rt/mod_ui.cpp rt/mod_pilllog.cpp rt/mod_itemnomicon.cpp rt/mod_basetime.cpp rt/mod_thegone.cpp rt/mod_rainbow.cpp)
+set(RT_SRC rt/core.cpp rt/display.cpp rt/builtins.cpp rt/swfload.cpp rt/raster.cpp rt/render.cpp rt/snapshot.cpp rt/patches.cpp rt/platform.cpp rt/audio.cpp rt/main.cpp rt/debug.cpp rt/touch.cpp rt/controls.cpp rt/menuui.cpp rt/mods.cpp rt/mod_staton.cpp rt/mod_genesis.cpp rt/mod_widesaac.cpp rt/mod_ui.cpp rt/mod_pilllog.cpp rt/mod_itemnomicon.cpp rt/mod_basetime.cpp rt/mod_thegone.cpp rt/mod_rainbow.cpp rt/mod_goodsaac.cpp rt/mod_continuum.cpp rt/mod_challengelab.cpp rt/mod_marksman.cpp)
 if(PSP)   # own main loop and sceGu renderer
   list(REMOVE_ITEM RT_SRC rt/render.cpp rt/main.cpp rt/touch.cpp)
   list(APPEND RT_SRC rt/render_psp.cpp rt/main_psp.cpp)
@@ -217,7 +222,7 @@ elseif(NINTENDO_SWITCH)
   # .elf -> .nro (icon + hbmenu metadata)
   set(APP_TITLE "The Binding of Isaac")
   set(APP_AUTHOR "whylurking")
-  set(APP_VERSION "1.5.0")
+  set(APP_VERSION "1.6.0")
   add_custom_command(TARGET isaac POST_BUILD
     COMMAND ${DEVKITPRO}/tools/bin/nacptool --create "${APP_TITLE}" "${APP_AUTHOR}" "${APP_VERSION}" isaac.nacp
     COMMAND ${DEVKITPRO}/tools/bin/elf2nro $<TARGET_FILE:isaac> isaac.nro --icon=${CMAKE_SOURCE_DIR}/switch/icon.jpg --nacp=isaac.nacp
@@ -238,5 +243,6 @@ elseif(NOT NINTENDO_SWITCH AND NOT ANDROID AND NOT PSP)
   if(NOT NO_SYSTEM_GL)
     target_link_libraries(isaac PRIVATE GL)
   endif()
-  target_link_libraries(isaac PRIVATE m)
+  find_package(Threads REQUIRED)
+  target_link_libraries(isaac PRIVATE m Threads::Threads ${CMAKE_DL_LIBS} rt)
 endif()

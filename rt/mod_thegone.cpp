@@ -23,9 +23,11 @@
 #include "swfdata.h"
 #include "snapshot.h"
 #include "mod_ui.h"
+#include "mod_hook.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -34,6 +36,8 @@
 
 namespace fl {
 bool recompInGameplay(bool* inGame);
+int clabCharacter();   // mod_challengelab.cpp
+bool clabRunActive();
 extern bool g_saveLocked;
 extern std::string g_modsSaveDir;
 extern void (*g_soSaveHook)(const Value& data, bool before);
@@ -529,7 +533,9 @@ Value wBalljunk(Act& ac, Value thisv, int argc, Value* argv) {
         return VUNDEF;
     }
     if (fr == 15 && truthy(V(a, "satan"))) {   // a devil deal
-        double lev = num(V(root(), "lev"));
+        // (the room: its index on the floor and the floor; reset with each run too: a devil room of a later run that had
+        // the same index used to keep every deal locked - issue #39)
+        double lev = num(V(root(), "lev")) + 1000 * num(V(root(), "chaps"));
         if (lev != s_dealRoom) { s_dealRoom = lev; s_dealTaken = false; }
         if (s_dealTaken) { S(a, "nohit", VFALSE); return VUNDEF; }
         double price = sub >= 0 && sub < (int)(sizeof kShopPrice / sizeof kShopPrice[0]) ? kShopPrice[sub] : 0;
@@ -567,6 +573,7 @@ void hookBalljunk(const Value& a) {
     }
 }
 void startRun(const Value& a) {
+    s_dealRoom = -1e9; s_dealTaken = false;
     Value p = V(a, "player");
     if (!p.isObj()) return;
     // Spirit of the Night, as the game gives a character's starting items (the original game doesn't have it: its
@@ -587,6 +594,37 @@ void startRun(const Value& a) {
 }
 }  // namespace
 
+// Continuum: whether the run being saved is The Gone's, and a saved run going on (his items already given)
+bool goneRunActive() { return goneRunNow(); }
+// Marksman: The Gone is the character chosen on the character select
+bool goneSelected() { return modActive("thegone") && s_sel; }
+// Challenge Lab: its starting items are given before this mod's tick has wrapped the run's powerlevel: wrapped now,
+// so the Black Mirror becomes the held active item (and the others are taken as his)
+void goneHookItems(const Value& a) { if (modActive("thegone") && a.isObj()) hookFn(g_wPower, a, wPower); }
+// the character cards' lettering, for other mods' texts (Challenge Lab's names): the kit is taken from the character
+// select's cards (_root.men.men.cha.inc), which the menu has whether this mod is on or not
+bool cardLetters() {
+    static bool tried = false;
+    if (g_kit.g.empty() && !tried) {
+        Value inc = V(V(V(V(root(), "men"), "men"), "cha"), "inc");
+        if (inc.isObj() && inc.o->kind == OK_CLIP) { tried = true; buildKit(inc); }
+    }
+    return g_kit.g.size() >= 20;
+}
+bool cardHasLetter(char c) { return c == ' ' || g_kit.g.count(c == 'G' ? 'C' : c) > 0; }
+double cardLetterH() {
+    double h = 0; int n = 0;
+    for (char c : {'T', 'H', 'E', 'A', 'R'}) { auto it = g_kit.g.find(c); if (it != g_kit.g.end()) { h += it->second.y1 - it->second.y0; n++; } }
+    return n ? h / n : 10;
+}
+double cardTextW(const std::string& t, double k) {
+    double w = 0;
+    for (char c : t) { if (c == ' ') { w += 7; continue; } auto it = g_kit.g.find(c == 'G' ? 'C' : c); if (it != g_kit.g.end()) w += (it->second.x1 - it->second.x0) + 1.2; }
+    return std::max(0.0, w - 1.2) * k;
+}
+uint16_t cardTextShape(const std::string& t, double k, double x, double cy) { return letteringShape(t, k, x, cy, 1e9, nullptr, true); }
+void goneResume(bool gone) { s_running = true; s_goneRun = gone; }
+
 bool goneThingInfo(bool card, int id, std::string& name, std::string& desc, bool& active, int& quality) {
     active = false;
     if (card) {
@@ -599,13 +637,14 @@ bool goneThingInfo(bool card, int id, std::string& name, std::string& desc, bool
     if (k < 0) return false;
     name = kItemName[k];
     if (k == 0) { quality = 3; desc = "One enemy shot in four goes straight through you. When you do get hurt, one time in twenty every enemy in the room takes 50 damage."; }
-    else if (k == 1) { quality = 2; active = true; desc = "3 charges. The room turns negative and, for seven seconds, the enemies go for each other."; }
+    else if (k == 1) { quality = 2; active = true; desc = "3 charges. The room turns negative and, for seven seconds, half the enemies turn round (those that came for you keep away, those that kept away come for you, and they shoot the other way) and the others go for each other."; }
     else { quality = 0; desc = "Should do something?"; }
     return true;
 }
 void goneUnlockAll() {   // (GenesisConsole's "unlock": everything, until the game is closed)
     unlLoad();
     for (int i = 0; i < U_N; i++) g_u.session[i] = true;
+    for (int j = 0; j < 3; j++) g_u.collSession[j] = true;   // (in the collection too, as the game's own items)
 }
 void thegoneTick(const ModInfo&) {
     static bool rooted = false;
@@ -614,6 +653,11 @@ void thegoneTick(const ModInfo&) {
         for (GcObj** r : {(GcObj**)&g_cha, (GcObj**)&g_orig, (GcObj**)&g_portrait, (GcObj**)&g_card, (GcObj**)&g_hudPatch, (GcObj**)&g_cardLocked, (GcObj**)&g_lockedLabel, (GcObj**)&g_mirrorA, (GcObj**)&g_nothingA}) gcAddRoot(r);
     }
     Value R = root();
+    if (!g_itemSprite) {   // (the items' pictures: the collection's large one on the menu, before any item is seen in a run -
+                           //  a Challenge Lab run can start holding the Black Mirror)
+        Value itt = V(V(V(R, "men"), "men"), "itt");
+        if (itt.isObj() && itt.o->kind == OK_CLIP) learnItemSprite((MovieClip*)itt.o);
+    }
     int frame = vm.root->kind == OK_CLIP ? ((MovieClip*)vm.root)->cur : 0;
     if (frame == 5) ringTick();
     // the run
@@ -623,11 +667,13 @@ void thegoneTick(const ModInfo&) {
     static uint32_t serial = 0; bool restarted = modsRunSerial() != serial; serial = modsRunSerial();
     if (s_running && (frame == 5 || newRun || restarted)) { s_running = false; s_goneRun = false; }
     if (!s_running && play && !newRun && frame != 5) {
-        s_running = true; s_goneRun = s_sel && unlocked(U_GONE);
+        s_running = true;
+        int lab = clabCharacter();   // (a Challenge Lab run: its own character)
+        s_goneRun = lab >= 0 ? lab == 7 : s_sel && unlocked(U_GONE);
         if (s_goneRun) startRun(a);
     }
     // the unlocks: progress, the new things' effects and pictures, the cards
-    menuSetExtras({});   // (collectionTick sets them again while the collection shows)
+    menuSetExtras("thegone", {});   // (collectionTick sets them again while the collection shows)
     unlLoad();
     if (!g_soSaveHook) g_soSaveHook = saveHook;
     secretsInMenu(frame == 5);

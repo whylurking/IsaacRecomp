@@ -7,6 +7,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <vector>
 #include "render.h"
 #include "swfdata.h"
 
@@ -34,6 +35,7 @@ public:
     void up(int64_t id, double px, double py, const TouchCtx& c, double now);
     void update(const TouchCtx& c, double now);   // every frame: timed releases, mode changes
     void releaseAll(double now);
+    void prune(const std::vector<int64_t>& live, double now);   // every frame: fingers not in `live` (on the screen) let go
     int sticks(TouchStick out[2]) const;          // what to draw
     float moveAmount() const;                     // movement stick: how far it is pushed (0..1), -1 = not moving
     static float deadZone();

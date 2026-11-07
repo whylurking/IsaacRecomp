@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cmath>
 #include <atomic>
+#include <map>
 
 namespace fl {
 
@@ -275,6 +276,41 @@ static void charSelectGuard(const Value& root) {
     s_csPos = pos;
 }
 
+// Eternal Edition: an item pedestal (frame 10) the player pushes stays where it is, as in the Flash game. The game's
+// pedestal code moves the pedestal's home (xpp, ypp) toward where it was pushed (`if (enfcheck(xp, yp, xpp, ypp, 30))
+// { xp = xp * 0.3 + xpp * 0.7; ...; if (levzz(...) < 1) xpp = xp; }`), which in this runtime let an empty pedestal
+// be pushed across the room; in the Flash game it doesn't move. Each pedestal's home is the one it had when it was
+// first seen in the room; a change under 60 px is a push and is undone (a larger one is the game moving it itself).
+static void eternalPedestals(const Value& root) {
+    static Object* lastA = nullptr;
+    static std::map<Object*, std::pair<double, double>> home;
+    Value a = getMemK(root, intern("a"));
+    if (!a.isObj()) { lastA = nullptr; home.clear(); return; }
+    if (a.o != lastA) { lastA = a.o; home.clear(); }
+    Value balls = getMemK(a, intern("ball"));
+    if (!balls.isObj() || balls.o->kind != OK_ARRAY) return;
+    static Str *kS = intern("s"), *kD = intern("d"), *kAlt = intern("alt"), *kBusted = intern("busted"), *kXpp = intern("xpp"),
+               *kYpp = intern("ypp"), *kXp = intern("xp"), *kYp = intern("yp"), *kX = intern("_x"), *kY = intern("_y");
+    std::map<Object*, std::pair<double, double>> now;
+    for (const Value& b : ((Array*)balls.o)->el) {
+        if (!b.isObj() || toNum(getMemK(b, kS)) != 5) continue;
+        Value d = getMemK(b, kD);
+        if (!d.isObj() || d.o->kind != OK_CLIP || ((MovieClip*)d.o)->cur != 10 || truthy(getMemK(b, kAlt)) || truthy(getMemK(b, kBusted))) continue;
+        Value xpp = getMemK(b, kXpp), ypp = getMemK(b, kYpp);
+        if (xpp.t != T_NUM || ypp.t != T_NUM) continue;
+        auto it = home.find(b.o);
+        if (it == home.end()) { now[b.o] = {xpp.n, ypp.n}; continue; }
+        std::pair<double, double> h = it->second; now[b.o] = h;
+        double dx = xpp.n - h.first, dy = ypp.n - h.second;
+        if ((dx || dy) && std::fabs(dx) < 60 && std::fabs(dy) < 60) {
+            setMemK(b, kXpp, Value(h.first)); setMemK(b, kYpp, Value(h.second));
+            setMemK(b, kXp, Value(h.first)); setMemK(b, kYp, Value(h.second));
+            setMemK(b, kX, Value(h.first)); setMemK(b, kY, Value(h.second));
+        } else if (dx || dy) now[b.o] = {xpp.n, ypp.n};
+    }
+    home.swap(now);
+}
+
 void recompPatchesTick() {
     Value root((Object*)vm.root);
     charSelectGuard(root);
@@ -295,6 +331,7 @@ void recompPatchesTick() {
         Value hud = getMemK(root, intern("hud"));
         Value mark = hud.isObj() ? getMemK(hud, intern("hardon")) : VUNDEF;
         if (mark.isObj() && mark.o->isDisplay() && !truthy(getMemK(root, intern("hardmode")))) ((DisplayObject*)mark.o)->visible = false;
+        eternalPedestals(root);
     }
 }
 // actively playing: _root.a is the game clip and it is not paused (unpause = true)

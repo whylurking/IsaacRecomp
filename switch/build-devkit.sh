@@ -51,6 +51,8 @@ chmod +x $DEVKITPRO/*.sh $DEVKITPRO/portlibs/switch/bin/$T-pkg-config
 (cd $SRC/libnx && make $J && make install)
 (cd $SRC/libdrm_nouveau && make $J && make install)
 # mesa (nouveau, EGL, desktop OpenGL). Newlib already provides timespec_get.
+# (its generators use ElementTree's getchildren(), gone since Python 3.9)
+grep -rl 'getchildren()' --include=*.py $SRC/mesa-20.1.0-rc3 | xargs -r sed -i -E 's/([A-Za-z_]+)\.getchildren\(\)/list(\1)/g'
 (cd $SRC/mesa-20.1.0-rc3 && $DEVKITPRO/meson-toolchain.sh switch > ../crossfile.txt && \
    sed -i "s/c_args = \['-D__SWITCH__',/c_args = ['-D__SWITCH__','-DHAVE_TIMESPEC_GET',/; s/cpp_args = \['-D__SWITCH__',/cpp_args = ['-D__SWITCH__','-DHAVE_TIMESPEC_GET',/" ../crossfile.txt && \
    meson setup --buildtype=plain --cross-file=../crossfile.txt --default-library=static --prefix=$DEVKITPRO/portlibs/switch \

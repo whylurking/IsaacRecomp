@@ -1,0 +1,119 @@
+; IsaacRecomp - Challenge Lab: your own challenges, in the order the game shows them (at most 8).
+; These eight come with the program. Change them, or make your own, with tools/challenge_lab_maker.html.
+;   goal = mom | moms_heart | isaac | satan | the_chest
+;   character = isaac | magdalene | cain | judas | bluebaby | eve | samson | thegone (The Gone's mod; Isaac without it)
+;   items = item numbers, separated by commas (the same one can go more than once; only these are given)
+;   (230-232: The Gone's items, with his mod on)      trinket = its number (0: none)
+;   curse = any of darkness, labyrinth, lost, blind (your tears don't come out)      treasure_rooms = normal | fewer | none
+;   bad_luck = 0 | 1      hard_mode = 0 | 1 (Eternal Edition's hard mode; the other games have none)
+;   (advanced, optional) speed, tears, range, luck: + or -; damage, shot_speed: times; hearts, soul_hearts,
+;   coins, bombs, keys: how many. Left out: as the character has them.
+;   complete = 1 once you have finished it (crossed out in the game; the game sets it)
+
+[challenge]
+; 1 - everything explodes
+name = Kaboom!
+goal = moms_heart
+character = isaac
+items = 52, 106, 125, 190   ; Dr. Fetus, Mr. Mega, Bobby-Bomb, Pyro
+trinket = 0
+curse = none
+treasure_rooms = normal
+bad_luck = 0
+complete = 0
+
+[challenge]
+; 2 - you can't shoot: the babies do it for you, where you aim (the game shows three familiars at most)
+name = Babysitter
+goal = mom
+character = magdalene
+items = 67, 95, 167   ; Sister Maggy, Robo-Baby, Harlequin Baby
+trinket = 0
+curse = blind
+treasure_rooms = normal
+bad_luck = 0
+complete = 0
+
+[challenge]
+; 3 - fast, slow-moving tears that curve
+name = Snail Mail
+goal = mom
+character = cain
+items = 3, 3   ; Spoon Bender, Spoon Bender
+trinket = 7   ; Curved Horn
+curse = none
+treasure_rooms = normal
+bad_luck = 0
+speed = -0.3
+range = 10
+shot_speed = 0.55
+complete = 0
+
+[challenge]
+; 4 - huge dark floors, but you know the way
+name = Lost in the Dark
+goal = moms_heart
+character = eve
+items = 21, 54, 91   ; The Compass, Treasure Map, Spelunker Hat
+trinket = 0
+curse = darkness, labyrinth, lost
+treasure_rooms = normal
+bad_luck = 0
+complete = 0
+
+[challenge]
+; 5 - no treasure rooms: everything comes from the shops
+name = Pennies From Heaven
+goal = satan
+character = bluebaby
+items = 64, 94, 109   ; Steam Sale, Sack of Pennies, Money = Power
+trinket = 21   ; Bloody Penny
+curse = none
+treasure_rooms = none
+bad_luck = 0
+coins = 30
+complete = 0
+
+[challenge]
+; 6 - one heart, a lot of damage
+name = Glass Cannon
+goal = moms_heart
+character = judas
+items =
+trinket = 0
+curse = none
+treasure_rooms = fewer
+bad_luck = 0
+tears = 1
+damage = 2.5
+hearts = 1
+soul_hearts = 0
+complete = 0
+
+[challenge]
+; 7 - run!
+name = Gotta Go Fast
+goal = mom
+character = isaac
+items = 27, 143   ; Wooden Spoon, Speed Ball
+trinket = 0
+curse = none
+treasure_rooms = none
+bad_luck = 0
+speed = 0.6
+tears = 0.8
+complete = 0
+
+[challenge]
+; 8 - the real one: half a heart of soul, no luck, no light, no treasure, all the way down
+name = One Way Ticket
+goal = the_chest
+character = bluebaby
+items =
+trinket = 0
+curse = darkness, lost
+treasure_rooms = none
+bad_luck = 1
+soul_hearts = 1
+bombs = 0
+complete = 0

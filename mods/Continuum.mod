@@ -1,0 +1,9 @@
+; IsaacRecomp mod. Turn it on or off with tools/mod_manager.html (or "mods =" in isaac.ini).
+id = continuum
+name = Continuum
+version = 1.0
+author = IsaacRecomp
+category = Gameplay
+summary = Leave a run and carry on with it later, as Rebirth's "Continue".
+engine = continuum
+description = Lets you stop a run and come back to it later. On the pause screen, "Exit to main menu" asks "Are you sure you want me to die?": "Yes" ends the run as always, and "No", in a room with no enemies left, saves the run and goes to the main menu. The next time you press Start there, you are back in that run, in that room, with everything you had. You appear in front of the door you last came in by (in the middle of the room in a floor's first room, before you have been anywhere else); if something is in the way now, on the free spot nearest to it. In a room with enemies, "No" does what it always did (back to the run). A click outside the note, or the controller's B / circle, takes you back to the pause screen. The run is kept in saves/continuum_<game>.txt until you carry on with it. Works with The Gone and BaseTime (the clocks carry on).

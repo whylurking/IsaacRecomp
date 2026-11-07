@@ -488,9 +488,18 @@ static void handleStream(MovieClip* c) {
     StreamInfo* st = c->def->stream.get();
     if (!st) return;
     int f0 = c->cur - 1;
-    if (f0 < 0 || f0 >= (int)st->frameBlock.size() || st->frameBlock[f0] < 0) return;
+    if (f0 < 0 || f0 >= (int)st->frameBlock.size()) return;
+    if (st->frameBlock[f0] < 0) {
+        // A frame without a block in the middle of the stream (ending 5 has frames 402-415 without any: the Flash IDE
+        // leaves out silent ones) is silent in Flash. The channel plays all the blocks joined, so it would run ahead
+        // into the next block's sound and then be pulled back (heard as the music cutting and starting again): it
+        // holds its place instead until the blocks come back.
+        if (st->lastBlock == -2) { st->lastBlock = -1; for (int i = (int)st->frameBlock.size() - 1; i >= 0; i--) if (st->frameBlock[i] >= 0) { st->lastBlock = i; break; } }
+        if (f0 < st->lastBlock && c->streamChan >= 0 && chanAlive(c->streamChan)) streamPause(c->streamChan, true);
+        return;
+    }
     if (c->streamChan < 0 || !chanAlive(c->streamChan)) c->streamChan = streamStart(st, f0, c);
-    else streamSync(c->streamChan, st, f0);
+    else { streamPause(c->streamChan, false); streamSync(c->streamChan, st, f0); }
     c->lastStreamFrame = f0;
 }
 static void stopStream(MovieClip* c) { if (c->streamChan >= 0) { soundStopChan(c->streamChan); c->streamChan = -1; } }
@@ -1045,8 +1054,10 @@ static void collectButtons(DisplayObject* d, std::vector<ButtonObj*>& out, bool 
     if (d->kind == OK_CLIP) for (auto* k : ((MovieClip*)d)->kids) collectButtons(k, out, visibleOnly);
 }
 
+uint32_t g_startKeyTick = 0;   // (Continuum) the last tick Enter, Space or Right was pressed: the main menu's "Start" keys
 void keyEvent(int code, int ascii, bool down) {
     if (code > 0 && code < 256) g_player.keys[code] = down;
+    if (down && (code == 13 || code == 32 || code == 39)) g_startKeyTick = g_player.tick;
     if (down) { g_player.lastKey = code; g_player.lastAscii = ascii; }
     // Key listeners
     std::vector<Object*> ls = g_player.keyListeners;
@@ -1071,11 +1082,26 @@ void keyEvent(int code, int ascii, bool down) {
     runActions();
 }
 
+// The main menu's paper sheets (_root.pauss: options, controls, challenges) lie over the menu's own notes, whose
+// buttons are still under the pointer: in Flash a click goes to the topmost button, and the sheet's paper is no
+// button, so the menu behind it could be clicked through the sheet. While a sheet is out (its frame 1 is empty),
+// only its own buttons answer.
+static bool behindMenuSheet(ButtonObj* b) {
+    if (vm.root->kind != OK_CLIP || ((MovieClip*)vm.root)->cur != 5) return false;
+    static Str* kPauss = intern("pauss");
+    Value p = getMemK(Value((Object*)vm.root), kPauss);
+    if (!p.isObj() || p.o->kind != OK_CLIP) return false;
+    MovieClip* sheet = (MovieClip*)p.o;
+    if (sheet->removed || sheet->cur <= 1) return false;
+    for (DisplayObject* q = sheet; q; q = q->parent) if (!q->visible) return false;
+    for (DisplayObject* q = b; q; q = q->parent) if (q == sheet) return false;
+    return true;
+}
 static ButtonObj* buttonAt(double x, double y) {
     std::vector<ButtonObj*> bs; collectButtons(vm.root, bs, true);
     for (size_t i = bs.size(); i-- > 0;) {
         ButtonObj* b = bs[i];
-        if (!b->enabled) continue;
+        if (!b->enabled || behindMenuSheet(b)) continue;
         Mat w = worldMatrix(b);
         for (auto* k : b->hitKids) if (hitShape(k, w * k->m, x, y, true)) return b;
     }
@@ -1102,8 +1128,16 @@ bool touchAnyButton() {
     for (auto* b : bs) if (b->enabled && !b->removed) return true;
     return false;
 }
+bool (*g_buttonReleaseHook)(ButtonObj* b) = nullptr;   // (a mod: Continuum's "No")
+bool (*g_modMouseHook)(double x, double y, int type) = nullptr;   // (a mod's own clickable things: Challenge Lab's list)
+bool (*g_modHandHook)(double x, double y) = nullptr;   // (menuui.cpp: the hand cursor over those too)
 void mouseEvent(double x, double y, int type) {
     g_player.mouseX = x; g_player.mouseY = y;
+    if (type != 0 && g_modMouseHook && g_modMouseHook(x, y, type)) {   // (taken: no button under it gets it)
+        g_player.mouseDown = type == 1;
+        if (type == 2) g_player.pressButton = nullptr;
+        return;
+    }
     ButtonObj* over = buttonAt(x, y);
     if (over != g_player.hoverButton) {
         if (g_player.hoverButton && !g_player.hoverButton->removed) { buttonSetState(g_player.hoverButton, 0); runButtonConds(g_player.hoverButton, 0x02, 0); }
@@ -1118,7 +1152,7 @@ void mouseEvent(double x, double y, int type) {
         g_player.mouseDown = false;
         if (g_player.pressButton) {
             ButtonObj* p = g_player.pressButton; g_player.pressButton = nullptr;
-            if (p == over && !p->removed) { buttonSetState(p, 1); runButtonConds(p, 0x08, 0); }
+            if (p == over && !p->removed) { buttonSetState(p, 1); if (!g_buttonReleaseHook || !g_buttonReleaseHook(p)) runButtonConds(p, 0x08, 0); }
             else if (!p->removed) { buttonSetState(p, 0); runButtonConds(p, 0x100 | 0x40, 0); }
         }
     }

@@ -2,6 +2,7 @@
 #include "mods.h"
 #include "snapshot.h"
 #include "core.h"
+#include "mod_hook.h"
 #include "platform.h"
 #include <algorithm>
 #include <chrono>
@@ -24,7 +25,7 @@ static bool validId(const std::string& s) {
     for (char c : s) if (!isalnum((unsigned char)c) && c != '_' && c != '-') return false;
     return true;
 }
-static const char* kEngines[] = {"staton", "genesis", "widesaac", "pilllog", "itemnomicon", "basetime", "thegone", "rainbow"};   // the built-in engines (mods.h)
+static const char* kEngines[] = {"staton", "genesis", "widesaac", "pilllog", "itemnomicon", "basetime", "thegone", "rainbow", "goodsaac", "continuum", "challengelab", "marksman"};   // the built-in engines (mods.h)
 
 static bool parseMod(const std::string& path, const std::string& file, ModInfo& m) {
     FILE* f = platformFopen(path, "rb"); if (!f) return false;
@@ -122,7 +123,9 @@ static const struct { const char* file; const char* text; } kBuiltin[] = {
 #include "mods_builtin.inc"
     {nullptr, nullptr}};
 
+std::string g_modsDir;   // the mods folder (ending in a separator)
 void modsInit(const std::string& dir, const std::string& enabledList) {
+    g_modsDir = dir;
     g_mods.clear();
     std::vector<std::string> names;
     if (!platformListDir(dir, names)) { if (platformMkdir(dir.substr(0, dir.size() - 1))) logf("mods: created %s\n", dir.c_str()); }
@@ -297,7 +300,7 @@ static void hideUnplacedTears() {
 }
 
 void modsTick() {
-    { bool want = false; for (auto& m : g_mods) want |= m.enabled && (m.engine == "basetime" || m.engine == "thegone"); if (want) hookNewstart(); }
+    { bool want = false; for (auto& m : g_mods) want |= m.enabled && (m.engine == "basetime" || m.engine == "thegone" || m.engine == "challengelab"); if (want) hookNewstart(); }
     g_snapOv.clear();   // (each mod adds its snapshot-only changes again every tick)
     hideUnplacedTears();
     static const bool prof = getenv("ISAAC_MODPROF") != nullptr;   // (testing: time spent in each mod, at exit)
@@ -320,6 +323,31 @@ void modsTick() {
         else if (m.engine == "basetime") basetimeTick(m);
         else if (m.engine == "thegone") thegoneTick(m);
         else if (m.engine == "rainbow") rainbowTick(m);
+        else if (m.engine == "goodsaac") goodsaacTick(m);
+        else if (m.engine == "continuum") continuumTick(m);
+        else if (m.engine == "challengelab") challengelabTick(m);
+        else if (m.engine == "marksman") marksmanTick(m);
     }
+}
+// ---- wrapping the game's functions (mod_hook.h)
+static std::vector<GameHook*> g_hooks;
+void hookGameFn(GameHook& w, const Value& a, NativeFn fn) {
+    if (!w.wrap) {
+        Function* f = gcNew<Function>(); f->proto = protos::function; f->nat = fn; f->dbgName = w.name; gcPin(f);
+        w.wrap = f; gcAddRoot((GcObj**)&w.orig); gcAddRoot((GcObj**)&w.a); g_hooks.push_back(&w);
+    }
+    if (!a.isObj()) return;
+    Value cur = getMemK(a, intern(w.name));
+    if (!cur.isObj() || cur.o->kind != OK_FUNCTION) return;
+    for (Object* f = cur.o; f;) {   // already in the chain of wrappers on this _root.a?
+        if (f == (Object*)w.wrap) return;
+        Object* next = nullptr;
+        for (GameHook* h : g_hooks) if ((Object*)h->wrap == f && h->a == a.o) { next = (Object*)h->orig; break; }
+        f = next;
+    }
+    w.orig = (Function*)cur.o; w.a = a.o; setMemK(a, intern(w.name), Value((Object*)w.wrap));
+}
+Value callGameOrig(GameHook& w, Act& ac, Value thisv, int argc, Value* argv) {
+    return w.orig ? callValue(ac, Value((Object*)w.orig), thisv, argc, argv) : VUNDEF;
 }
 }  // namespace fl

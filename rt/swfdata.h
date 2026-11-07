@@ -166,6 +166,7 @@ struct StreamInfo {
     std::vector<uint32_t> frameSample;   // starting sample per frame (0-based index)
     std::vector<int32_t> frameBlock;     // -1 if the frame has no block
     int rate = 44100; bool stereo = false;
+    int lastBlock = -2;                  // (display.cpp) the last frame with a block, found when first needed
 };
 struct SpriteDef : CharDef {
     int nframes = 1;

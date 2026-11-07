@@ -17,6 +17,7 @@
 // playerhurt: god mode), like the analog-movement wrapper of dirkey (patches.cpp), and _root.playsp (speed) with
 // the write guard. See NOTES.md "v1.5: GenesisConsole" and tools/genesis_wiki.html.
 #include "mods.h"
+#include "mod_hook.h"
 #include "core.h"
 #include "display.h"
 #include "swfdata.h"
@@ -196,12 +197,9 @@ bool anyCreateOvr() { return std::isfinite(ovr(3)) || std::isfinite(ovr(4)); }
 // ---- wrappers of the game's functions on _root.a
 enum { H_DMGDO, H_FIRR, H_CREATE, H_PLAYERHURT, H_COUNT };
 const char* kHookName[H_COUNT] = {"dmgdo", "firr", "create", "playerhurt"};
-Function* g_hookWrap[H_COUNT] = {};
-Function* g_hookOrig[H_COUNT] = {};
-Object* g_hookA[H_COUNT] = {};   // the clip the original came from (a new room = a new _root.a)
-Value callOrig(int h, Act& ac, Value thisv, int argc, Value* argv) {
-    return g_hookOrig[h] ? callValue(ac, Value((Object*)g_hookOrig[h]), thisv, argc, argv) : VUNDEF;
-}
+// (mod_hook.h: shared with the other mods that wrap the same functions, Challenge Lab's base stats)
+GameHook g_hook[H_COUNT] = {{"dmgdo"}, {"firr"}, {"create"}, {"playerhurt"}};
+Value callOrig(int h, Act& ac, Value thisv, int argc, Value* argv) { return callGameOrig(g_hook[h], ac, thisv, argc, argv); }
 double fireDelay(double tearsPerSecond) { return std::max(1.0, 30.0 / tearsPerSecond - 1); }
 // the game's own shot-speed multiplier (StatOn's formula) without the override
 double gameShotSpeed() {
@@ -249,29 +247,17 @@ bool hookWanted(int h) {
     }
     return false;
 }
-// installs / removes the wrappers on the current _root.a (every tick: a new room has a new _root.a)
+// installs the wrappers on the current _root.a when wanted (every tick: a new room has a new _root.a); once on, a
+// wrapper stays until the room changes and lets everything through while its override is off
 void updateHooks() {
     Value a = gameA();
     if (!a.isObj()) return;
     for (int h = 0; h < H_COUNT; h++) {
-        if (!g_hookWrap[h]) {
-            Function* f = gcNew<Function>(); f->proto = protos::function; f->nat = kHookFn[h]; f->dbgName = kHookName[h]; gcPin(f);
-            g_hookWrap[h] = f;
-            gcAddRoot((GcObj**)&g_hookOrig[h]); gcAddRoot((GcObj**)&g_hookA[h]);
-        }
-        Str* k = intern(kHookName[h]);
-        Value cur = getMemK(a, k);
-        bool installed = cur.isObj() && cur.o == (Object*)g_hookWrap[h];
-        if (hookWanted(h)) {
-            if (!installed && cur.isObj() && cur.o->kind == OK_FUNCTION) {
-                g_hookOrig[h] = (Function*)cur.o; g_hookA[h] = a.o;
-                setMemK(a, k, Value((Object*)g_hookWrap[h]));
-                // a new room: what the game computed before the wrapper was there
-                if (h == H_FIRR) { Value p = player(); if (p.isObj()) { double f = fireDelay(ovr(1)); S(p, "fire", Value(f)); S(root(), "firra", Value(f)); } }
-            }
-        } else if (installed && g_hookOrig[h] && g_hookA[h] == a.o) {
-            setMemK(a, k, Value((Object*)g_hookOrig[h]));
-        }
+        if (!hookWanted(h)) continue;
+        bool fresh = g_hook[h].a != a.o;
+        hookGameFn(g_hook[h], a, kHookFn[h]);
+        // a new room: what the game computed before the wrapper was there
+        if (fresh && g_hook[h].a == a.o && h == H_FIRR) { Value p = player(); if (p.isObj()) { double f = fireDelay(ovr(1)); S(p, "fire", Value(f)); S(root(), "firra", Value(f)); } }
     }
 }
 
@@ -654,19 +640,46 @@ void cmdDebugEnemies(const Args&) {   // (hidden) every enemy type known to the 
 }
 
 void cmdUnlock(const Args&) {
-    // Every unlock (characters, items, chests...) on for this session only: the save lock (g_saveLocked) still keeps
-    // it out of the save. The game reads _root.locker / ulocker (the same arrays as so.data.lock / ulock).
+    // Every unlock (characters, items, chests, challenges, endings, secrets, the collection) on for this session
+    // only: the save lock (g_saveLocked) still keeps it out of the save. The game reads _root.locker / ulocker (the
+    // same arrays as so.data.lock / ulock: 100 in the original and WotL, 200 in Eternal), the found secrets from
+    // _root.lockor (so.data.lockor: the "View found secrets" list), the collection from _root.colss (so.data.cols),
+    // each character's endings from _root.minwin (so.data.mwin), and from so.data the wins (the endings picture and
+    // the Cathedral: 10) and icer (Sheol done: challenges 9-10 and an ending).
     Value so = V(root(), "so"), data = V(so, "data");
     Value lk = V(root(), "locker"), ul = V(root(), "ulocker");
-    if (!lk.isObj() || !ul.isObj() || !data.isObj()) { err("The save isn't loaded yet"); return; }
+    if (!lk.isObj() || !ul.isObj() || !data.isObj() || lk.o->kind != OK_ARRAY) { err("The save isn't loaded yet"); return; }
     uint8_t g = lk.o->guarded; lk.o->guarded = 0;
-    int n = 0;
-    for (int i = 1; i < 100; i++) {
+    int n = 0, len = std::max(100, (int)((Array*)lk.o)->el.size());
+    for (int i = 1; i < len; i++) {
         if (!truthy(getMem(lk, Value((double)i)))) n++;
         setMem(lk, Value((double)i), VTRUE);
         setMem(ul, Value((double)i), VTRUE);
     }
     lk.o->guarded = g;
+    // the found secrets: only those the secrets screen has a picture for (its clip _root.unl2.d shows frame n for
+    // secret n: 64 in the original, 98 in WotL - its frames 99-107 are empty -, 113 in Eternal; past them it stays on
+    // the last one, so Eternal Life came back again and again). The new ones in order from the first, before the
+    // ones found in play (the screen starts at the list's first)
+    Value lo = V(root(), "lockor");
+    if (lo.isObj() && lo.o->kind == OK_ARRAY) {
+        int secrets = game() == "og" ? 64 : game() == "eternal" ? 113 : 98;
+        Array* a = (Array*)lo.o;
+        std::vector<bool> has(secrets + 1, false);
+        std::vector<Value> keep;
+        for (auto& v : a->el) { int e = (int)num(v, -1); if (e > 0 && e <= secrets && !has[e]) { has[e] = true; keep.push_back(v); } }
+        std::vector<Value> all;
+        for (int i = 1; i <= secrets; i++) if (!has[i]) all.push_back(Value((double)i));
+        all.insert(all.end(), keep.begin(), keep.end());
+        a->el = all;
+    }
+    Value cols = V(root(), "colss");
+    int items = game() == "og" ? 132 : 198;
+    if (cols.isObj()) for (int i = 1; i <= items; i++) setMem(cols, Value((double)i), VTRUE);
+    Value mw = V(root(), "minwin");
+    if (mw.isObj()) for (int i = 0; i < 10; i++) setMem(mw, Value((double)i), VTRUE);
+    if (num(V(data, "wins")) < 10) S(data, "wins", Value(10.0));
+    if (num(V(data, "icer")) < 1) S(data, "icer", Value(1.0));
     goneUnlockAll();   // (The Gone and what he unlocks, for this session too)
     ok(n ? fmt("Everything unlocked (%d new) until you close the game: not saved. Back to the main menu to see it.", n) : "Everything is already unlocked");
 }

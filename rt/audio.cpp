@@ -35,6 +35,7 @@ struct Chan {
     std::mutex m;
     std::atomic<bool> active{false};
     std::atomic<bool> decOk{false};
+    std::atomic<bool> paused{false};   // (streams) a frame without a block: silent, holding its place
     drmp3 dec;
     SoundDef* def = nullptr; StreamInfo* stream = nullptr;
     Object* owner = nullptr;
@@ -107,7 +108,7 @@ static bool chanSeek(Chan& c, uint64_t frame) {
     c.posPub = (double)c.framesConsumed; c.curPub = (double)frame;
     return ok;
 }
-static void chanFree(Chan& c) { if (c.decOk && !c.pcm) drmp3_uninit(&c.dec); c.pcm.reset(); c.rec.reset(); c.decOk = false; c.active = false; c.owner = nullptr; c.def = nullptr; c.stream = nullptr; c.env.clear(); c.bytes.reset(); }
+static void chanFree(Chan& c) { if (c.decOk && !c.pcm) drmp3_uninit(&c.dec); c.pcm.reset(); c.rec.reset(); c.decOk = false; c.active = false; c.paused = false; c.owner = nullptr; c.def = nullptr; c.stream = nullptr; c.env.clear(); c.bytes.reset(); }
 
 // envelope (Ruffle's EnvelopeSignal): linear between points, counted in output frames from the start
 static void envStart(Chan& c, const std::vector<std::array<uint32_t, 3>>* env) {
@@ -189,7 +190,7 @@ static void mix(void*, Uint8* stream, int len) {
     std::fill(out, out + frames * 2, 0.f);
     float master = g_masterVolume * g_audioVolume;
     for (auto& c : g_chans) {
-        if (!c.active.load(std::memory_order_acquire)) continue;
+        if (!c.active.load(std::memory_order_acquire) || c.paused.load(std::memory_order_relaxed)) continue;
         std::lock_guard<std::mutex> lk(c.m);
         if (!c.active) continue;
         double step = (double)c.srcRate / g_rate;
@@ -359,6 +360,8 @@ static Chan* allocChan() {
 }
 
 int soundStart(SoundDef* s, double offsetSec, int loops, Object* owner, float vol, float pan, const std::vector<std::array<uint32_t, 3>>* env) {
+    static const bool soundLog = getenv("ISAAC_SOUNDLOG") != nullptr;   // (testing) every sound started
+    if (soundLog && s) logf("[sound] %u id %d\n", g_player.tick, (int)s->id);
     if (!s || s->format != 2 || !s->size) return -1;
     std::shared_ptr<const std::vector<uint8_t>> bytes;
     const uint8_t* data = s->data; size_t size = s->size;
@@ -390,6 +393,7 @@ int soundStart(SoundDef* s, double offsetSec, int loops, Object* owner, float vo
     c->bufLen = 0; c->pos = 0; c->eof = false; c->framesConsumed = 0; c->posPub = 0; c->curPub = (double)c->startFrame;
     envStart(*c, env);
     c->gen = ++g_genCounter;
+    c->paused.store(false);
     c->active.store(true, std::memory_order_release);
     int idx = (int)(c - g_chans);
     c->m.unlock();
@@ -436,6 +440,7 @@ void streamSync(int ch, StreamInfo* st, int frame0) {
     }
 }
 
+void streamPause(int ch, bool p) { if (ch >= 0 && ch < kChans) g_chans[ch].paused.store(p, std::memory_order_relaxed); }
 bool chanAlive(int ch) { if (ch < 0 || ch >= kChans) return false; return g_chans[ch].active.load(std::memory_order_acquire); }
 static void chanStop(Chan& c) { std::lock_guard<std::mutex> lk(c.m); chanFree(c); }
 void soundStopChan(int ch) { if (ch < 0 || ch >= kChans) return; chanStop(g_chans[ch]); }

@@ -185,13 +185,119 @@ Included:
                       Heart with no item but his own unlocks Nothing (treasure rooms:
                       some enemies just aren't there), Isaac unlocks The Void Shard
                       (devil rooms: enemy shots may go through you) and Satan
-                      unlocks Black Mirror (treasure rooms: the room in negative and
-                      the enemies fight each other). Kept in saves/thegone_<game>.txt.
+                      unlocks Black Mirror (treasure rooms: the room in negative,
+                      half the enemies turned round - what came for you keeps away
+                      and the other way round - and the others going for each
+                      other). Kept in saves/thegone_<game>.txt.
   RainbowVision       colours for colour-blind players: the whole picture is
   (rainbowvision)     recoloured so colours you can't tell apart look different
                       (hearts, pills, enemies). Option type = deuteranopia (green-
                       blind, the most common), protanopia (red-blind) or tritanopia
                       (blue-blind); strength = 0-100. Only the colours on screen change.
+
+  Good Saac           fixes bugs of the Flash games (checked one by one against each
+  (goodsaac)          game's code; each fix has its own option, all on):
+                      - subtitles, names (original, WotL): the line under 14 items'
+                        names (Sacred Heart said "Tears Up"...), "Magdalena" and
+                        "XXX" in mini-boss banners.
+                      - heart_name: <3 had no name in the collection.
+                      - last_will: the death diary's empty picture (Razor Blade,
+                        "killed by nothing").
+                      - eternal_heart (original, WotL): an Eternal Heart now saves
+                        ??? (or anyone with no heart containers).
+                      - shop_pills (WotL, Eternal): pills for sale changed colour
+                        when bought.
+                      - challenge_pause: pausing in a challenge room brought all
+                        the waves at once.
+                      - challenge_music: its music went on after leaving the room.
+                      - mom_red: a teleport during Mom's death left the screen red.
+                      - foot_shadow: Mom's or Satan's foot hurt you after they died.
+                      - mom_voice (original, WotL): Mom's Heart repeating "Isaac!".
+                      - gamekid_head: The Gamekid left the head flipped.
+                      - daddy_stomps (WotL, Eternal): Daddy Longlegs stomped only
+                        once on bosses that don't move (Gurdy, Isaac).
+                      - unlocks: the Headless Horseman also unlocked Little Chad;
+                        (WotL, Eternal) The Chest gave ??? Eve's trinket and Eve
+                        ???'s.
+                      - xl_depths (WotL, Eternal): XL Depths' first boss was
+                        treated as Mom (no item; Large Marge won there).
+                      - forget_me_now (WotL, Eternal): in the Cathedral it made a
+                        Sheol.
+                      - secrets_keys (original, WotL): the secrets screen moved
+                        two secrets per arrow key.
+                      - select_click (WotL): no sound when changing character
+                        with keys.
+                      - start_spot: a new run started in the doorway you last came
+                        in by in the run before.
+                      - mom_deals: after Mom (Depths 2), the devil / angel room
+                        door stayed hidden behind her parts. It now shows.
+                      - breakfast: with every item already owned (The D6 / Dice,
+                        Habit, Scapular...), the game froze looking for one. It
+                        gives Breakfast instead, as Rebirth does.
+                      - familiar_shots: with Robo-Baby, the familiars after it
+                        (Harlequin Baby, Sister Maggy...) shot from the wrong
+                        side, far too fast or not at all: its laser left the
+                        wrong aim for them.
+                      - familiars (an improvement, as in Rebirth): no limit to the
+                        babies that follow you; every baby item has its baby (the
+                        game has three at most, two in the original).
+
+  Continuum           leave a run and carry on with it later, as Rebirth's
+  (continuum)         "Continue". On the pause screen, "Exit to main menu" asks
+                      "Are you sure you want me to die?": "Yes" ends the run as
+                      always; "No", in a room with no enemies left, saves the run
+                      and goes to the main menu, and the next Start there takes you
+                      back into it (that room, everything you had). You appear in
+                      front of the door you last came in by (in the middle of the
+                      room in a floor's first room, before you have been anywhere
+                      else); if something is there now, on the free spot nearest. In a room with enemies, "No" does what it
+                      always did. A click anywhere else, Escape or the controller's
+                      B / circle go back to the pause screen. The run is kept in
+                      saves/continuum_<game>.txt until you carry on with it. The
+                      Gone's run and BaseTime's clocks carry on too.
+
+  Challenge Lab       up to 8 challenges of your own (Wrath of the Lamb, Eternal
+  (challengelab)      Edition). In the challenge list ("To Do List"), the arrow next
+                      to Back turns to the Challenge Lab page; the same arrow there
+                      goes back. Make them with
+                      tools/challenge_lab_maker.html, which saves
+                      mods/customchallenges.txt: for each one its name, where it
+                      ends (Mom, Mom's Heart, Isaac, Satan, The Chest), the
+                      character (The Gone too, with his mod on; Isaac without it),
+                      the starting items (The Gone's too, with his mod on) and
+                      trinket - the character starts with those only -, the rules
+                      the game's own challenges use (darkness, the labyrinth or the
+                      Lost on every floor, fewer or no treasure rooms, -2 luck,
+                      Eternal Edition's hard mode), the
+                      Curse of the Blind (your tears don't come out; familiars still
+                      shoot where you aim) and, as an advanced option, other base
+                      stats (speed, tears, damage, range, shot speed, luck, heart
+                      containers, soul hearts, coins, bombs, keys). All of them can be played from the start. Their runs
+                      are runs apart: nothing in them unlocks anything or counts in
+                      your statistics, endings, secrets or collection, and the item
+                      pools have every item, as if all were unlocked (the save is
+                      put back as it was when the run ends). Finished ones are
+                      crossed out (complete = 1 in customchallenges.txt). Eight
+                      challenges come with it (from fun to very hard): they are
+                      written into the mods folder when it has no list yet. With a
+                      controller, left / right on the challenge list go down to
+                      Back or to the arrow.
+  Marksman (marksman) completion marks, as in Rebirth: on the character select, one
+                      more note (in Eternal Edition between the hard mode note and
+                      Select!) with a mark for each ending - Mom (a footprint), Mom's
+                      Heart (a heart), Isaac (a cross), Satan (an upside-down
+                      cross), ??? (a question mark); the original game has Mom and
+                      Mom's Heart only; a mark only appears once that boss has been
+                      met in some run, to spoil nothing - for the character shown: faint until he or
+                      she has reached it, written in once reached, red when reached
+                      in Eternal Edition's hard mode. The Gone has his own. An ending
+                      counts when its last boss is beaten or the game shows it, in
+                      normal runs (not in challenges, Challenge Lab or with
+                      GenesisConsole on), from the time the mod is on (the game's
+                      save doesn't keep them by character). During a challenge, the
+                      goal's mark is shown small in the HUD band, top left (with Hyper
+                      Zoom, in the top left corner). Options: note, challenge_goal (1 /
+                      0). Kept in saves/marksman_<game>.txt. It only reads the game.
 
 THE isaac.ini FILE
 ------------------
@@ -221,7 +327,9 @@ Created automatically next to the executable the first time you run it.
   performance = 0     1 = performance diagnostics always on (same as F3, see below)
   touch_controls = 1  (Android, Switch) 0 turns off the touch joysticks, HUD taps and the
                       pause button (touch then only works in menus)
-  render_height = 0   (Android only) rendering resolution, 0 = automatic (see ANDROID)
+  render_height = 0   rendering resolution: on PC, 0 = the window's; lower (e.g. 540 on
+                      a 720p screen) draws at that height and scales up, for slow
+                      computers. On Android 0 = automatic (see ANDROID)
   joystick_acceleration = 1
                       analog movement: with a stick (touch, controller, Switch) the
                       speed depends on how far you push it, from 40% just past the
@@ -295,6 +403,68 @@ starts, the saves found there are copied to the "saves" folder (the old ones are
 The same folder also holds preload.txt / preload_og.txt / preload_eternal.txt
 (graphics learned on this machine), screenshots and performance.txt.
 Saves from the Flash game can be converted with tools/save_converter.html (see above).
+
+CHANGES IN VERSION 16 (v1.6.0 public release numbering)
+--------------------------------------------------------
+- New mod: Good Saac (category "Bug fixes"): 22 fixes for known bugs of the Flash games,
+  each checked against the code of the three games (see MODS). Off unless turned on, like
+  every mod; each fix can be turned off on its own. Among them: the devil / angel room
+  door after Mom now shows, with every item already owned the game gives Breakfast
+  instead of freezing, a new run no longer starts in the doorway you last came in by
+  in the run before, and familiars' shots no longer go off from the other side of the
+  room, far too fast or not at all when Robo-Baby is one of them (its laser left the
+  wrong aim for the familiars that shoot after it). One improvement too, as in Rebirth:
+  no limit to the babies that follow you - every baby item has its baby (the game has
+  three at most, two in the original).
+- New mod: Continuum (category "Gameplay"): leave a run from the pause screen ("No" in
+  "Are you sure you want me to die?", in a room with no enemies) and carry on with it the
+  next time you press Start, as Rebirth's "Continue" (see MODS).
+- New mod: Challenge Lab (category "Gameplay"): up to 8 challenges of your own, on a
+  second page of the challenge list, made with the new tools/challenge_lab_maker.html
+  (character, items, trinket, curses - also the Curse of the Blind: no tears -,
+  treasure rooms, base stats, Eternal Edition's hard mode), playable from the start and
+  played apart from your save (your own hard mode setting is back as it was afterwards).
+  Eight challenges of its own come with it, from fun ("Kaboom!", "Babysitter") to very hard
+  ("One Way Ticket").
+- GenesisConsole: "unlock" now unlocks everything: all the challenges (also 10), the
+  endings, the secrets (each once, in order) and the whole collection, The Gone's items
+  too (for that session, as before).
+- The Gone: The Void Shard now lets the shots it dodges go right through you, and with
+  Black Mirror the enemies now move and shoot as their kind does: half of them turned
+  round (what came for you keeps away and the other way round), the others going for each
+  other - also while you fly over a rock, where they used to stop.
+- Continuum: a Challenge Lab run carried on with keeps its character's hearts.
+- Continuum: when you carry on with a run you now appear in front of the door you last came
+  in by (in the middle of the room in a floor's first room, when no other room has been
+  visited yet).
+- PC / Linux: render_height in isaac.ini now works there too: the game draws at that
+  height and scales the picture up (for slow computers; 0 = as before). Also: OpenGL ES
+  computers and handhelds are supported (the program falls back to OpenGL ES 3 / 2 when
+  desktop OpenGL is missing), less memory is used on low-memory devices, and the big
+  border picture around the room is drawn faster and sharper. These come from HellRok's
+  port to the RG CubeXX handheld (github.com/HellRok/IsaacRecomp): thank you!
+- Eternal Edition: an item pedestal can no longer be pushed or dragged around the room after
+  you take its item (it stays put, as in the Flash game).
+- Android: a finger whose lift never reached the touch controls (with the console open,
+  or during a multi-finger gesture) no longer leaves Isaac walking or shooting by himself:
+  the joysticks follow the fingers the system says are on the screen, every frame, and
+  any move / shoot key no finger holds is let go.
+- New mod: Marksman (category "HUD"): completion marks for each character, as in Rebirth,
+  on a new note of the character select (Mom, Mom's Heart, Isaac, Satan, ???; red in
+  Eternal Edition's hard mode; a boss's mark only shows once you have met that boss, so
+  nothing is spoiled), and during a challenge the goal's mark in the HUD band, top left
+  (see MODS).
+- StatOn: tears and range change as soon as the item is picked up (they used to wait for
+  the next tear).
+- The downloads now come with the "mods" folder (every mod and the Challenge Lab list)
+  and an empty "saves" folder, next to the program (Switch: in switch/isaac/).
+- Ending 5's music no longer cuts out and starts again half way (a stretch of the
+  animation with no sound in it: the music ran on and was pulled back). Issue #38.
+- The Gone: the devil deals of a later run's devil room could all stay locked (pushed
+  around like shop items) after a deal taken in an earlier run. Issue #39.
+- Challenge Lab: the hand cursor now shows over its arrows and its challenges, as over the
+  menus' other buttons.
+- Mods that change the same function of the game (The Gone and Good Saac) work together.
 
 CHANGES IN VERSION 15 (v1.5.0 public release numbering)
 --------------------------------------------------------

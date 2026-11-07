@@ -9,8 +9,15 @@ namespace fl {
 struct RasterSrc { int kind = 0; const CharDef* def = nullptr; uint16_t ratio = 0; const std::string* text = nullptr; uint32_t argb = 0; };
 RasterSrc rasterSrcOf(DisplayObject* d);
 bool contentBoundsSrc(const RasterSrc& s, RectF& b);
-struct Raster { std::vector<uint32_t> px; int w = 0, h = 0; double x0 = 0, y0 = 0, scale = 1; };
+struct Raster {
+    std::vector<uint32_t> px; int w = 0, h = 0; double x0 = 0, y0 = 0, scale = 1;
+    // "frame" graphics (a huge shape that is almost all off screen, like the game's 3000x3000 border overlay): only the part
+    // around the origin is rasterized; the rest of the shape's bounds (fx0..fy1, local units) is painted with the flat `fill`
+    // colour (premultiplied ARGB: the mean of the raster's border)
+    bool frame = false; uint32_t fill = 0; double fx0 = 0, fy0 = 0, fx1 = 0, fy1 = 0;
+};
 bool rasterize(DisplayObject* d, double scale, Raster& out);
+void rasterFrameSelfTest();
 bool rasterizeSrc(const RasterSrc& s, double scale, Raster& out);
 bool contentBounds(DisplayObject* d, RectF& b);
 void bitmapDraw(BitmapData* bd, Object* src, const Mat& m, const CX* cx);
