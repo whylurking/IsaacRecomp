@@ -157,16 +157,26 @@ save mods.txt and copy it to sd:/switch/isaac/mods/ (replacing the old one).
                   by clearing three floors in a row without a hit or a heart; with him,
                   Mom's Heart, Isaac and Satan unlock four new things of his own.
   RainbowVision   colours for colour-blind players.
-  Good Saac       20 fixes for known bugs of the Flash games (wrong item texts, empty death
+  Good Saac       22 fixes for known bugs of the Flash games (wrong item texts, empty death
                   diary pictures, an Eternal Heart that didn't save ???, pills for sale
                   that change colour, challenge waves all at once after a pause, a red
                   screen after Mom, wrong unlocks, Forget Me Now in the Cathedral, the
-                  deal door hidden after Mom, a freeze when no item is left...). Each
-                  fix can be turned off.
+                  deal door hidden after Mom, a freeze when no item is left, a new run
+                  starting in the last run's doorway, familiars' shots gone wrong
+                  next to Robo-Baby...), and no limit to the babies that follow
+                  you, as in Rebirth. Each one can be turned off.
   Continuum       leave a run and carry on with it later (Rebirth's "Continue"): in the
                   pause screen's "Are you sure you want me to die?", "No" in a room with
                   no enemies saves the run; the next Start goes back into it. B goes
                   back to the pause screen.
+  Challenge Lab   up to 8 challenges of your own, on a second page of the challenge list
+                  (the arrow next to Back), playable from the start and played apart
+                  from your save. Make them on a computer with
+                  tools/challenge_lab_maker.html and put customchallenges.txt in
+                  sd:/switch/isaac/mods/. Eight challenges come with it.
+  Marksman        completion marks for each character, as in Rebirth (Mom, Mom's Heart,
+                  Isaac, Satan, ???), on a new note of the character select; during a
+                  challenge, the goal's mark in the HUD band, top left.
 
 IF SOMETHING GOES WRONG
 -----------------------

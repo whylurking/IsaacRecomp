@@ -209,6 +209,7 @@ double soundPositionMs(Object* owner, bool* active = nullptr);   // active: a ch
 bool soundPlayingDef(SoundDef* s);
 int streamStart(StreamInfo* st, int frame0, Object* owner);
 void streamSync(int ch, StreamInfo* st, int frame0);
+void streamPause(int ch, bool paused);   // (a frame without a stream block: silence, as in Flash)
 bool chanAlive(int ch);
 void audioInit(bool device = true);   // false: test mode (mixed per tick)
 void audioDevicesChanged(double now);   // main thread: SDL_AUDIODEVICEADDED / REMOVED

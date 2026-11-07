@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Challenge Lab maker</title>
+<!--
+  Challenge Lab maker for IsaacRecomp: makes mods/customchallenges.txt, the list the Challenge Lab mod shows on the
+  second page of the game's challenge list (Wrath of the Lamb and Eternal Edition). Up to 8 challenges, one after the
+  other. Open an existing file to change it, or start from nothing. Nothing to install, no folder access: the new
+  file is downloaded. Works offline in any browser; nothing is uploaded anywhere.
+-->
+<style>
+  :root {
+    --paper: #e2dbcf; --paper-2: #ece6dc; --paper-3: #f6f2ec;
+    --ink: #3f3c39; --ink-soft: #6b665f; --line: #c3baab;
+    --flesh: #c99694; --blood: #8c2a2a; --black: #000; --ok: #3d6b3a;
+    --hand: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE", cursive;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { min-height: 100vh; background: var(--paper); color: var(--ink); font: 17px/1.4 var(--hand); overflow-x: hidden; }
+  main { max-width: 980px; margin: 0 auto; padding: 0 16px 70px; }
+  .bar { position: sticky; top: 0; z-index: 5; background: var(--paper); border-bottom: 3px solid var(--black);
+         display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 0 10px; }
+  .bar h1 { font: bold 30px/1 var(--hand); margin: 0 auto 0 0; letter-spacing: -.5px; }
+  .bar h1 .count { font-size: 17px; font-weight: normal; color: var(--ink-soft); margin-left: 6px; }
+  .btn { font: bold 17px/1 var(--hand); cursor: pointer; border: 3px solid var(--black); border-radius: 8px 10px 7px 11px;
+         background: var(--black); color: var(--paper-2); padding: 9px 14px 7px; }
+  .btn:hover:not(:disabled) { background: var(--blood); border-color: var(--blood); }
+  .btn.ghost { background: transparent; color: var(--ink); }
+  .btn.ghost:hover:not(:disabled) { background: rgba(0,0,0,.07); border-color: var(--black); }
+  .btn.small { font-size: 15px; padding: 5px 9px 4px; border-width: 2px; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--blood); outline-offset: 3px; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #msg:empty { display: none; }
+  .msg, .done { padding: 8px 12px; margin: 12px 0 0; font-size: 16px; }
+  .msg { border-left: 6px solid var(--blood); background: rgba(140,42,42,.1); color: #5e1c1c; }
+  .done { border-left: 6px solid var(--ok); background: rgba(61,107,58,.12); color: #2c4d2a; }
+  body.over::after { content: "Drop customchallenges.txt to open it"; position: fixed; inset: 12px; z-index: 9; border: 4px dashed var(--blood);
+         background: rgba(226,219,207,.92); display: grid; place-items: center; font: bold 30px var(--hand); color: var(--blood); }
+  h2 { font: bold 22px/1.1 var(--hand); margin: 26px 0 8px; display: flex; align-items: baseline; gap: 10px; }
+  h2::after { content: ""; flex: 1; height: 3px; background: var(--black); border-radius: 2px; transform: rotate(-.3deg); }
+  .cols { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 0 28px; align-items: start; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+
+  /* the list: a "To Do List" sheet */
+  .sheet { background: var(--paper-3); border: 3px solid var(--black); border-radius: 6px 12px 8px 14px; padding: 12px 12px 10px;
+           box-shadow: 5px 6px 0 rgba(0,0,0,.18); transform: rotate(-.4deg); }
+  .sheet ol { list-style: none; margin: 0; padding: 0; counter-reset: n; }
+  .sheet li { counter-increment: n; display: grid; grid-template-columns: 2.1em 1fr auto; align-items: center; gap: 6px;
+              padding: 6px 4px; border-bottom: 2px dashed var(--line); }
+  .sheet li:last-child { border-bottom: 0; }
+  .sheet li::before { content: counter(n) "."; font-weight: bold; font-size: 20px; color: var(--ink-soft); }
+  .sheet li.sel { background: rgba(201,150,148,.35); border-radius: 4px; }
+  .pick { font: bold 19px/1.15 var(--hand); color: var(--ink); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; min-width: 0; }
+  .pick small { display: block; font-weight: normal; font-size: 13px; color: var(--ink-soft); }
+  .moves { display: flex; gap: 4px; }
+  .moves .btn { padding: 3px 7px 2px; }
+  .empty { color: var(--ink-soft); padding: 8px 4px; }
+  .listbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+  /* the editor */
+  .ed { display: grid; grid-template-columns: 10.5em minmax(0, 1fr); gap: 10px 14px; align-items: center;
+        padding: 14px; background: var(--paper-2); border-radius: 4px 9px 5px 8px; }
+  .ed > label { font-weight: bold; }
+  .ed .hint { display: block; font-size: 13px; font-weight: normal; color: var(--ink-soft); line-height: 1.25; }
+  .ed input[type=text], .ed select { font: inherit; color: var(--ink); background: var(--paper-3); border: 2px solid #8d8780; border-radius: 4px; padding: 3px 8px; width: 100%; max-width: 420px; }
+  .ed #f-item { flex: 1; min-width: 10em; width: auto; }
+  .ed #f-name { flex: 1; min-width: 10em; width: auto; max-width: 300px; }
+  .ed input[type=checkbox] { flex: none; width: 20px; height: 20px; accent-color: var(--blood); margin: 0; }
+  .ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+  .namecount { font-size: 14px; color: var(--ink-soft); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; width: 100%; }
+  .chips li { display: inline-flex; align-items: center; gap: 6px; background: var(--paper-3); border: 2px solid var(--black); border-radius: 14px 11px 13px 12px; padding: 1px 4px 1px 10px; font-size: 15px; }
+  .chips li.act { border-color: var(--blood); }
+  .chips button { font: bold 15px/1 var(--hand); border: 0; background: none; cursor: pointer; color: var(--blood); padding: 2px 4px; }
+  .ed .lab { font-weight: bold; }
+  /* on / off choices: equal boxes, two to a row */
+  .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-width: 420px; }
+  .tog { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 4px 10px; font-weight: normal; cursor: pointer;
+         background: var(--paper-3); border: 2px solid #8d8780; border-radius: 6px 9px 7px 8px; line-height: 1.1; }
+  .tog:has(input:checked) { border-color: var(--blood); background: rgba(201,150,148,.28); }
+  .tog small { display: block; font-size: 12px; color: var(--ink-soft); }
+  .adv { grid-column: 1 / -1; border-top: 2px dashed var(--line); padding-top: 8px; }
+  .adv summary { cursor: pointer; font-weight: bold; width: max-content; }
+  .adv .hint { font-size: 13px; color: var(--ink-soft); margin: 6px 0 8px; }
+  .advgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 12px; }
+  .advgrid label { display: block; font-size: 15px; white-space: nowrap; }
+  .advgrid label small { font-size: 12px; color: var(--ink-soft); margin-left: 4px; }
+  .advgrid input { display: block; margin-top: 2px; font: inherit; font-size: 15px; color: var(--ink); background: var(--paper-3); border: 2px solid #8d8780; border-radius: 4px; padding: 2px 8px; width: 100%; }
+  .advgrid input:invalid { border-color: var(--blood); }
+  .note { font-size: 14px; color: var(--ink-soft); margin: 0; grid-column: 1 / -1; }
+  .note.lock { color: var(--blood); }
+  @media (max-width: 560px) { .checks { grid-template-columns: 1fr 1fr; max-width: none; margin-bottom: 8px; } .ed { grid-template-columns: 1fr; gap: 2px 0; } .ed .ctl { margin-bottom: 8px; } .bar h1 { flex-basis: 100%; } .bar .btn { flex: 1 1 0; font-size: 15px; padding: 8px 6px 6px; } }
+
+  code { font: 14px/1.3 ui-monospace, Consolas, monospace; background: rgba(0,0,0,.07); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+  footer { margin-top: 34px; font-size: 16px; color: var(--ink-soft); }
+  footer details { border-top: 2px dashed var(--line); padding: 10px 0; }
+  footer summary { cursor: pointer; color: var(--ink); font-weight: bold; }
+  footer ul { padding-left: 22px; margin: 6px 0; }
+  footer p { margin: 6px 0; max-width: 72ch; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <h1>Challenge Lab <span class="count" id="count"></span></h1>
+    <button type="button" class="btn ghost" id="open">Open customchallenges.txt</button>
+    <button type="button" class="btn ghost" id="new">New list</button>
+    <button type="button" class="btn" id="save">Save customchallenges.txt</button>
+    <input type="file" id="file" accept=".txt,text/plain" aria-label="Open customchallenges.txt">
+  </div>
+  <div id="msg" aria-live="polite"></div>
+
+  <div class="cols">
+    <section aria-labelledby="h-list">
+      <h2 id="h-list">The list</h2>
+      <div class="sheet"><ol id="list"></ol><p class="empty" id="empty">No challenges yet: add one.</p></div>
+      <div class="listbtns">
+        <button type="button" class="btn small" id="add">+ New challenge</button>
+      </div>
+    </section>
+    <section aria-labelledby="h-ed">
+      <h2 id="h-ed">Challenge <span id="ednum"></span></h2>
+      <div class="ed" id="ed">
+        <label for="f-name">Name</label>
+        <span class="ctl"><input type="text" id="f-name" maxlength="20" autocomplete="off"><span class="namecount" id="namecount"></span></span>
+
+        <label for="f-goal">Ends at</label>
+        <span class="ctl"><select id="f-goal">
+          <option value="mom">Mom</option>
+          <option value="moms_heart">Mom's Heart</option>
+          <option value="isaac">Isaac</option>
+          <option value="satan">Satan</option>
+          <option value="the_chest">The Chest</option>
+        </select></span>
+
+        <label for="f-char">Character</label>
+        <span class="ctl"><select id="f-char">
+          <option value="isaac">Isaac</option>
+          <option value="magdalene">Magdalene</option>
+          <option value="cain">Cain</option>
+          <option value="judas">Judas</option>
+          <option value="bluebaby">???</option>
+          <option value="eve">Eve</option>
+          <option value="samson">Samson</option>
+          <option value="thegone">The Gone (mod)</option>
+        </select></span>
+
+        <label for="f-item">Items<span class="hint">Only these</span></label>
+        <span class="ctl">
+          <input type="text" id="f-item" list="itemlist" placeholder="Item name or number" autocomplete="off">
+          <button type="button" class="btn small" id="additem">Add</button>
+          <ul class="chips" id="chips" aria-label="Starting items"></ul>
+        </span>
+
+        <label for="f-trinket">Trinket</label>
+        <span class="ctl"><select id="f-trinket"></select></span>
+
+        <span class="lab" id="l-curse">Curses<span class="hint">Every floor</span></span>
+        <span class="checks" role="group" aria-labelledby="l-curse">
+          <label class="tog" title="Dark floors, as Dark Was the Night"><input type="checkbox" id="f-dark"><span>Darkness</span></label>
+          <label class="tog" title="XL floors, as Large Marge"><input type="checkbox" id="f-maze"><span>Labyrinth<small>XL floors</small></span></label>
+          <label class="tog" title="Bigger floors"><input type="checkbox" id="f-lost"><span>Lost<small>bigger floors</small></span></label>
+          <label class="tog" title="Your tears don't come out; familiars still shoot where you aim"><input type="checkbox" id="f-blind"><span>Blind<small>no tears</small></span></label>
+        </span>
+
+        <label for="f-treasure">Treasure rooms</label>
+        <span class="ctl"><select id="f-treasure">
+          <option value="normal">As usual</option>
+          <option value="fewer">Fewer</option>
+          <option value="none">None</option>
+        </select></span>
+
+        <span class="lab">Rules</span>
+        <span class="checks"><label class="tog" title="As 7 Years Bad Luck"><input type="checkbox" id="f-luck"><span>Bad luck<small>-2 luck</small></span></label><label class="tog" title="Eternal Edition's hard mode (the other games have none)"><input type="checkbox" id="f-hard"><span>Hard mode<small>Eternal Edition</small></span></label></span>
+
+        <details class="adv" id="adv">
+          <summary>Base stats</summary>
+          <p class="hint">Empty: the character's own.</p>
+          <div class="advgrid" id="advgrid"></div>
+        </details>
+
+        <span class="lab">Done</span>
+        <span class="checks"><label class="tog" title="The game sets this when you finish it"><input type="checkbox" id="f-done"><span>Crossed out</span></label></span>
+
+        <p class="note" id="notes"></p>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <details>
+      <summary>Where customchallenges.txt goes</summary>
+      <ul>
+        <li>Windows and Linux: the <code>mods</code> folder next to the program</li>
+        <li>Android: <code>IsaacRecomp/mods/</code> in the internal storage</li>
+        <li>Nintendo Switch: <code>sd:/switch/isaac/mods/</code></li>
+      </ul>
+      <p>Replace the one that is there. The game reads it each time the challenge list opens, so there is no need to
+      restart it. Turn on the <b>Challenge Lab</b> mod with <code>mod_manager.html</code>.</p>
+    </details>
+    <details>
+      <summary>In the game</summary>
+      <p>Main menu, <b>Challenges</b>: the arrow next to Back opens the Challenge Lab (Wrath of the Lamb and Eternal
+      Edition). Every challenge can be played from the start, and nothing in its runs is saved: no unlocks, statistics
+      or collection.</p>
+    </details>
+  </footer>
+</main>
+<datalist id="itemlist"></datalist>
+<script>
+(function () {
+  'use strict';
+  var ITEMS = [[1,"The Sad Onion",0],[2,"The Inner Eye",0],[3,"Spoon Bender",0],[4,"Max's Head",0],[5,"My Reflection",0],[6,"Number One",0],[7,"Blood of the Martyr",0],[8,"Brother Bobby",0],[9,"Skatole",0],[10,"Halo of Flies",0],[11,"1up!",0],[12,"Magic Mushroom",0],[13,"The Virus",0],[14,"Roid Rage",0],[15,"<3",0],[16,"Raw Liver",0],[17,"Skeleton Key",0],[18,"A Dollar",0],[19,"Boom!",0],[20,"Transcendence",0],[21,"The Compass",0],[22,"Lunch",0],[23,"Dinner",0],[24,"Dessert",0],[25,"Breakfast",0],[26,"Rotten Meat",0],[27,"Wooden Spoon",0],[28,"The Belt",0],[29,"Mom's Underwear",0],[30,"Mom's Heels",0],[31,"Mom's Lipstick",0],[32,"Wire Coat Hanger",0],[33,"The Bible",1],[34,"The Book of Belial",1],[35,"The Necronomicon",1],[36,"The Poop",1],[37,"Mr. Boom",1],[38,"Tammy's Head",1],[39,"Mom's Bra",1],[40,"Kamikaze!",1],[41,"Mom's Pad",1],[42,"Bob's Rotten Head",1],[43,"Pills here!",1],[44,"Teleport!",1],[45,"Yum Heart",1],[46,"Lucky Foot",0],[47,"Doctor's Remote",1],[48,"Cupid's Arrow",0],[49,"Shoop da Whoop!",1],[50,"Steven",0],[51,"Pentagram",0],[52,"Dr. Fetus",0],[53,"Magneto",0],[54,"Treasure Map",0],[55,"Mom's Eye",0],[56,"Lemon Mishap",1],[57,"Distant Admiration",0],[58,"Book of Shadows",1],[59,"Wiggle Worm",0],[60,"The Ladder",0],[61,"Tarot Card",0],[62,"Charm of the Vampire",0],[63,"The Battery",0],[64,"Steam Sale",0],[65,"Anarchist Cookbook",1],[66,"The Hourglass",1],[67,"Sister Maggy",0],[68,"Technology",0],[69,"Chocolate Milk",0],[70,"Growth Hormones",0],[71,"Mini Mush",0],[72,"Rosary",0],[73,"Cube of Meat",0],[74,"A Quarter",0],[75,"PHD",0],[76,"X-Ray Vision",0],[77,"My Little Unicorn",1],[78,"Book of Revelations",1],[79,"The Mark",0],[80,"The Pact",0],[81,"Dead Cat",0],[82,"Lord of the Pit",0],[83,"The Nail",1],[84,"We Need to Go Deeper!",1],[85,"Deck of Cards",1],[86,"Monstro's Tooth",1],[87,"Loki's Horns",0],[88,"Little Chubby",0],[89,"Spider Bite",0],[90,"The Small Rock",0],[91,"Spelunker Hat",0],[92,"Super Bandage",0],[93,"The Gamekid",1],[94,"Sack of Pennies",0],[95,"Robo-Baby",0],[96,"Little C.H.A.D.",0],[97,"The Book of Sin",1],[98,"The Relic",0],[99,"Little Gish",0],[100,"Little Steve",0],[101,"The Halo",0],[102,"Mom's Bottle of Pills",1],[103,"The Common Cold",0],[104,"The Parasite",0],[105,"The Dice",1],[106,"Mr. Mega",0],[107,"The Pinking Shears",1],[108,"The Wafer",0],[109,"Money = Power",0],[110,"Mom's Contacts",0],[111,"The Bean",1],[112,"Guardian Angel",0],[113,"Demon Baby",0],[114,"Mom's Knife",0],[115,"Ouija Board",0],[116,"9 Volt",0],[117,"Dead Bird",0],[118,"Brimstone",0],[119,"Blood Bag",0],[120,"Odd Mushroom (thin)",0],[121,"Odd Mushroom (large)",0],[122,"Whore of Babylon",0],[123,"Monster Manual",1],[124,"Dead Sea Scrolls",1],[125,"Bobby-Bomb",0],[126,"Razor Blade",1],[127,"Forget Me Now",1],[128,"Forever Alone",0],[129,"Bucket of Lard",0],[130,"A Pony",1],[131,"Bomb Bag",0],[132,"A Lump of Coal",0],[133,"Guppy's Paw",1],[134,"Guppy's Tail",0],[135,"IV Bag",1],[136,"Best Friend",1],[137,"Remote Detonator",1],[138,"Stigmata",0],[139,"Mom's Purse",0],[140,"Bob's Curse",0],[141,"Pageant Boy",0],[142,"Scapular",0],[143,"Speed Ball",0],[144,"Bum Friend",0],[145,"Guppy's Head",1],[146,"Prayer Card",1],[147,"Notched Axe",1],[148,"Infestation",0],[149,"Ipecac",0],[150,"Tough Love",0],[151,"The Mulligan",0],[152,"Technology 2",0],[153,"Mutant Spider",0],[154,"Chemical Peel",0],[155,"The Peeper",0],[156,"Habit",0],[157,"Bloody Lust",0],[158,"Crystal Ball",1],[159,"Spirit of the Night",0],[160,"Crack the Sky",1],[161,"Ankh",0],[162,"Celtic Cross",0],[163,"Ghost Baby",0],[164,"The Candle",1],[165,"Cat-o-nine-tails",0],[166,"D20",1],[167,"Harlequin Baby",0],[168,"Epic Fetus",0],[169,"Polyphemus",0],[170,"Daddy Longlegs",0],[171,"Spider Butt",1],[172,"Sacrificial Dagger",0],[173,"Mitre",0],[174,"Rainbow Baby",0],[175,"Dad's Key",1],[176,"Stem Cells",0],[177,"Portable Slot",1],[178,"Holy Water",0],[179,"Fate",0],[180,"The Black Bean",0],[181,"White Pony",1],[182,"Sacred Heart",0],[183,"Tooth Picks",0],[184,"Holy Grail",0],[185,"Dead Dove",0],[186,"Blood Rights",1],[187,"Guppy's Hairball",0],[188,"Abel",0],[189,"SMB Super Fan!",0],[190,"Pyro",0],[191,"3 Dollar Bill",0],[192,"Telepathy for Dummies",1],[193,"MEAT!",0],[194,"Magic 8 Ball",0],[195,"Mom's Coin Purse",0],[196,"Squeezy",0],[197,"Jesus Juice",0],[198,"Box",0],[230,"The Void Shard",0,1],[231,"Black Mirror",1,1],[232,"Nothing",0,1]];   // [id, name, active, The Gone's mod] (the same in Wrath of the Lamb and Eternal Edition)
+  var NAME = {}; ITEMS.forEach(function (i) { NAME[i[0]] = i[1]; });
+  var ACTIVE = {}; ITEMS.forEach(function (i) { if (i[2]) ACTIVE[i[0]] = 1; });
+  var GONE = {}; ITEMS.forEach(function (i) { if (i[3]) GONE[i[0]] = 1; });
+  // trinkets: the game's numbers (1-33; 34 Game Squid only in Eternal Edition)
+  var TRINKETS = ['Fish Head', 'Pinky Eye', 'Push Pin', 'Liberty Cap', 'Umbilical Cord', "Child's Heart", 'Curved Horn', 'Rusted Key',
+    'Goat Hoof', "Mom's Pearl", 'Cancer', 'Red Patch', 'Match Stick', 'Lucky Toe', 'Cursed Skull', 'Safety Cap', 'Ace of Spades',
+    "Isaac's Fork", 'The Polaroid', 'A Missing Page', 'Bloody Penny', 'Burnt Penny', 'Flat Penny', 'Counterfeit Penny', 'Tick',
+    "Isaac's Head", "Maggy's Faith", "Judas' Tongue", "???'s Soul", "Samson's Lock", "Cain's Eye", "Eve's Bird Foot", 'The Left Hand', 'Game Squid'];
+  var MAX = 8, MAXNAME = 20;   // (the game's longest names: "Isaac Was Good Today", "The Doctors Revenge!")
+  var GOALS = { mom: 'Mom', moms_heart: "Mom's Heart", isaac: 'Isaac', satan: 'Satan', the_chest: 'The Chest' };
+  var CHARS = { isaac: 'Isaac', magdalene: 'Magdalene', cain: 'Cain', judas: 'Judas', bluebaby: '???', eve: 'Eve', samson: 'Samson', thegone: 'The Gone' };
+  // advanced base stats: key, label, hint, min, max, step
+  var STATS = [
+    ['speed', 'Speed', '+/-', -0.9, 2, 0.05],
+    ['tears', 'Tears', '+/- a second', -2.5, 15, 0.05],
+    ['damage', 'Damage', 'times', 0.1, 20, 0.05],
+    ['range', 'Range', '+/-', -6, 30, 0.1],
+    ['shot_speed', 'Shot speed', 'times', 0.2, 4, 0.05],
+    ['luck', 'Luck', '+/-', -10, 10, 1],
+    ['hearts', 'Hearts', 'containers', 0, 12, 1],
+    ['soul_hearts', 'Soul hearts', '', 0, 12, 1],
+    ['coins', 'Coins', '', 0, 99, 1],
+    ['bombs', 'Bombs', '', 0, 99, 1],
+    ['keys', 'Keys', '', 0, 99, 1]
+  ];
+  function mk(o) {
+    var c = { name: 'Challenge', goal: 'mom', character: 'isaac', items: [], trinket: 0, dark: false, maze: false, lost: false, blind: false,
+              treasure: 'normal', bad_luck: false, hard: false, complete: false, stats: {} };
+    if (o) for (var k in o) c[k] = o[k];
+    return c;
+  }
+  var list = [], sel = -1;
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function say(kind, html) { $('msg').innerHTML = html ? '<p class="' + kind + '">' + html + '</p>' : ''; }
+  function cleanName(s) { return s.replace(/[^A-Za-z0-9 :.\-!?\/()]/g, '').replace(/^\s+/, '').slice(0, MAXNAME); }
+  function statNum(st, v) {   // a valid value or '' (as the character)
+    v = String(v).trim().replace(/^x/i, ''); if (v === '') return '';
+    var n = parseFloat(v); if (!isFinite(n)) return '';
+    return Math.max(st[3], Math.min(st[4], n));
+  }
+
+  // ---- the file (the same format the game reads: mods/customchallenges.txt)
+  function parse(text) {
+    var out = [], cur = null;
+    text.replace(/^﻿/, '').split(/\r?\n/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line || line[0] === ';' || line[0] === '#') return;
+      if (line.toLowerCase() === '[challenge]') { cur = mk({ name: '' }); out.push(cur); return; }
+      var eq = line.indexOf('='); if (!cur || eq < 0) return;
+      var k = line.slice(0, eq).trim().toLowerCase(), v = line.slice(eq + 1).trim();
+      if (k !== 'name') { var sc = v.indexOf(';'); if (sc >= 0) v = v.slice(0, sc).trim(); }
+      var lv = v.toLowerCase();
+      if (k === 'name') cur.name = cleanName(v);
+      else if (k === 'goal') cur.goal = GOALS[lv] ? lv : lv === 'chest' ? 'the_chest' : 'mom';
+      else if (k === 'character') cur.character = CHARS[lv] ? lv : (lv === '???' || lv === 'blue_baby') ? 'bluebaby' : lv === 'the_gone' ? 'thegone' : 'isaac';
+      else if (k === 'curse' || k === 'curses') { cur.dark = lv.indexOf('darkness') >= 0; cur.maze = lv.indexOf('labyrinth') >= 0; cur.lost = lv.indexOf('lost') >= 0; cur.blind = lv.indexOf('blind') >= 0; }
+      else if (k === 'treasure_rooms' || k === 'treasure') cur.treasure = lv === 'fewer' || lv === 'none' ? lv : 'normal';
+      else if (k === 'bad_luck') cur.bad_luck = parseInt(v, 10) > 0;
+      else if (k === 'hard_mode') cur.hard = parseInt(v, 10) > 0;
+      else if (k === 'complete') cur.complete = parseInt(v, 10) > 0;
+      else if (k === 'trinket') { var t = parseInt(v, 10); cur.trinket = t >= 1 && t <= 34 ? t : 0; }
+      else if (k === 'items') cur.items = (v.match(/\d+/g) || []).map(Number).filter(function (n) { return NAME[n]; }).slice(0, 20);
+      else STATS.forEach(function (st) { if (st[0] === k) { var n = statNum(st, v); if (n !== '') cur.stats[k] = n; } });
+    });
+    out.forEach(function (c) { if (!c.name) c.name = 'Challenge'; });
+    return out;
+  }
+  function serialize() {
+    var s = '; IsaacRecomp - Challenge Lab: your own challenges, in the order the game shows them (at most ' + MAX + ').\n' +
+            '; Made with tools/challenge_lab_maker.html. It goes in the game\'s "mods" folder.\n' +
+            ';   goal = mom | moms_heart | isaac | satan | the_chest\n' +
+            ';   character = isaac | magdalene | cain | judas | bluebaby | eve | samson | thegone (The Gone\'s mod; Isaac without it)\n' +
+            ';   items = item numbers, separated by commas (the same one can go more than once; only these are given)\n' +
+            ';   (230-232: The Gone\'s items, with his mod on)      trinket = its number (0: none)\n' +
+            ';   curse = any of darkness, labyrinth, lost, blind (can\'t shoot)      treasure_rooms = normal | fewer | none      bad_luck = 0 | 1\n' +
+            ';   hard_mode = 0 | 1 (Eternal Edition\'s hard mode)\n' +
+            ';   (advanced, optional) speed, tears, range, luck: + or -; damage, shot_speed: times; hearts, soul_hearts,\n' +
+            ';   coins, bombs, keys: how many. Left out: as the character has them.\n' +
+            ';   complete = 1 once you have finished it (crossed out in the game; the game sets it)\n';
+    list.forEach(function (c, i) {
+      var curse = [c.dark ? 'darkness' : '', c.maze ? 'labyrinth' : '', c.lost ? 'lost' : '', c.blind ? 'blind' : ''].filter(Boolean).join(', ') || 'none';
+      s += '\n[challenge]\n; ' + (i + 1) + '\nname = ' + c.name + '\ngoal = ' + c.goal + '\ncharacter = ' + c.character +
+           '\nitems = ' + c.items.join(', ') + (c.items.length ? '   ; ' + c.items.map(function (n) { return NAME[n]; }).join(', ') : '') +
+           '\ntrinket = ' + c.trinket + (c.trinket ? '   ; ' + TRINKETS[c.trinket - 1] : '') +
+           '\ncurse = ' + curse + '\ntreasure_rooms = ' + c.treasure + '\nbad_luck = ' + (c.bad_luck ? 1 : 0) + '\nhard_mode = ' + (c.hard ? 1 : 0) + '\n';
+      STATS.forEach(function (st) { if (c.stats[st[0]] !== undefined && c.stats[st[0]] !== '') s += st[0] + ' = ' + c.stats[st[0]] + '\n'; });
+      s += 'complete = ' + (c.complete ? 1 : 0) + '\n';
+    });
+    return s;
+  }
+  function summary(c) {
+    var w = [CHARS[c.character], 'to ' + GOALS[c.goal]];
+    if (c.items.length) w.push(c.items.length + (c.items.length === 1 ? ' item' : ' items'));
+    if (c.trinket) w.push(TRINKETS[c.trinket - 1]);
+    if (c.dark) w.push('darkness'); if (c.maze) w.push('XL floors'); if (c.lost) w.push('lost'); if (c.blind) w.push('can\'t shoot');
+    if (c.treasure === 'fewer') w.push('fewer treasure'); else if (c.treasure === 'none') w.push('no treasure');
+    if (c.bad_luck) w.push('bad luck');
+    if (c.hard) w.push('hard mode');
+    if (Object.keys(c.stats).length) w.push('own stats');
+    if (c.complete) w.push('finished');
+    return w.join(', ');
+  }
+
+  // ---- drawing
+  function renderList() {
+    var ol = $('list'); ol.innerHTML = '';
+    list.forEach(function (c, i) {
+      var li = document.createElement('li'); if (i === sel) li.className = 'sel';
+      li.innerHTML = '<button type="button" class="pick" data-i="' + i + '" aria-label="Edit challenge ' + (i + 1) + ', ' + esc(c.name) + '">' +
+        (c.complete ? '<s>' + esc(c.name) + '</s>' : esc(c.name)) +
+        '<small>' + esc(summary(c)) + '</small></button><span class="moves">' +
+        '<button type="button" class="btn small ghost" data-up="' + i + '" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>&uarr;</button>' +
+        '<button type="button" class="btn small ghost" data-down="' + i + '" aria-label="Move down"' + (i === list.length - 1 ? ' disabled' : '') + '>&darr;</button>' +
+        '<button type="button" class="btn small ghost" data-del="' + i + '" aria-label="Delete">&times;</button></span>';
+      ol.appendChild(li);
+    });
+    $('empty').hidden = list.length > 0;
+    $('add').disabled = list.length >= MAX;
+    $('count').textContent = list.length + ' / ' + MAX;
+  }
+  function renderEditor() {
+    var c = list[sel], on = !!c;
+    Array.prototype.forEach.call($('ed').querySelectorAll('input,select,button'), function (e) { e.disabled = !on; });
+    $('ednum').textContent = on ? (sel + 1) : '';
+    if (!on) { $('f-name').value = ''; $('chips').innerHTML = ''; $('notes').textContent = 'Choose a challenge in the list, or add one.'; $('notes').className = 'note'; $('namecount').textContent = ''; return; }
+    $('f-name').value = c.name; $('namecount').textContent = c.name.length + ' / ' + MAXNAME;
+    $('f-goal').value = c.goal; $('f-char').value = c.character; $('f-treasure').value = c.treasure; $('f-luck').checked = c.bad_luck; $('f-hard').checked = c.hard;
+    $('f-dark').checked = c.dark; $('f-maze').checked = c.maze; $('f-lost').checked = c.lost; $('f-blind').checked = c.blind; $('f-done').checked = c.complete;
+    $('f-trinket').value = String(c.trinket);
+    STATS.forEach(function (st) { var e = $('s-' + st[0]); if (document.activeElement !== e) e.value = c.stats[st[0]] !== undefined ? c.stats[st[0]] : ''; });
+    var ul = $('chips'); ul.innerHTML = '';
+    c.items.forEach(function (n, j) {
+      var li = document.createElement('li'); if (ACTIVE[n]) li.className = 'act';
+      li.innerHTML = esc(NAME[n]) + (ACTIVE[n] ? ' (active)' : '') + (GONE[n] ? ' (The Gone)' : '') + '<button type="button" data-rm="' + j + '" aria-label="Remove ' + esc(NAME[n]) + '">&times;</button>';
+      ul.appendChild(li);
+    });
+    var notes = [];
+    if (c.character === 'thegone') notes.push('The Gone needs his mod (without it: Isaac).');
+    if (c.items.some(function (n) { return GONE[n]; })) notes.push('The Gone\'s items need his mod.');
+    if (c.trinket === 34) notes.push('Game Squid: Eternal Edition only.');
+    var act = c.items.filter(function (n) { return ACTIVE[n]; });
+    if (act.length > 1) notes.push('One active item: ' + NAME[act[act.length - 1]] + ' stays.');
+    $('notes').textContent = notes.join(' '); $('notes').className = notes.length ? 'note lock' : 'note';
+  }
+  function render() { renderList(); renderEditor(); }
+
+  // ---- the form
+  var tsel = $('f-trinket');
+  tsel.innerHTML = '<option value="0">None</option>' + TRINKETS.map(function (t, i) { return '<option value="' + (i + 1) + '">' + esc(t) + (i === 33 ? ' (Eternal Edition)' : '') + '</option>'; }).join('');
+  $('advgrid').innerHTML = STATS.map(function (st) {
+    return '<label for="s-' + st[0] + '">' + esc(st[1]) + ' <small>' + esc(st[2]) + '</small><input type="number" id="s-' + st[0] + '" data-stat="' + st[0] + '" min="' + st[3] + '" max="' + st[4] + '" step="' + st[5] + '" inputmode="decimal" placeholder="-"></label>';
+  }).join('');
+  $('advgrid').addEventListener('input', function (e) {
+    var k = e.target.dataset.stat, c = list[sel]; if (!k || !c) return;
+    var st = STATS.filter(function (x) { return x[0] === k; })[0], n = statNum(st, e.target.value);
+    if (n === '') delete c.stats[k]; else c.stats[k] = n;
+    renderList();
+  });
+  $('advgrid').addEventListener('change', renderEditor);
+
+  // ---- events
+  $('list').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.i !== undefined) { sel = +b.dataset.i; $('adv').open = Object.keys(list[sel].stats).length > 0; render(); $('f-name').focus(); return; }
+    var i;
+    if (b.dataset.up !== undefined) { i = +b.dataset.up; var t = list[i - 1]; list[i - 1] = list[i]; list[i] = t; sel = i - 1; }
+    else if (b.dataset.down !== undefined) { i = +b.dataset.down; var u = list[i + 1]; list[i + 1] = list[i]; list[i] = u; sel = i + 1; }
+    else if (b.dataset.del !== undefined) { i = +b.dataset.del; list.splice(i, 1); if (sel >= list.length) sel = list.length - 1; }
+    render();
+  });
+  $('add').addEventListener('click', function () { if (list.length >= MAX) return; list.push(mk({ name: 'Challenge ' + (list.length + 1) })); sel = list.length - 1; render(); $('f-name').select(); });
+  $('f-name').addEventListener('input', function () {
+    var c = list[sel]; if (!c) return;
+    var v = cleanName(this.value); if (v !== this.value) { var p = this.selectionStart; this.value = v; this.setSelectionRange(Math.min(p, v.length), Math.min(p, v.length)); }
+    c.name = v.trim() || 'Challenge'; $('namecount').textContent = v.length + ' / ' + MAXNAME; renderList();
+  });
+  [['f-goal', 'goal'], ['f-char', 'character'], ['f-treasure', 'treasure']].forEach(function (p) {
+    $(p[0]).addEventListener('change', function () { if (list[sel]) { list[sel][p[1]] = this.value; render(); } });
+  });
+  $('f-trinket').addEventListener('change', function () { if (list[sel]) { list[sel].trinket = +this.value; render(); } });
+  [['f-luck', 'bad_luck'], ['f-hard', 'hard'], ['f-dark', 'dark'], ['f-maze', 'maze'], ['f-lost', 'lost'], ['f-blind', 'blind'], ['f-done', 'complete']].forEach(function (p) {
+    $(p[0]).addEventListener('change', function () { if (list[sel]) { list[sel][p[1]] = this.checked; render(); } });
+  });
+  var dl = $('itemlist');
+  ITEMS.forEach(function (i) { var o = document.createElement('option'); o.value = i[1] + ' (' + i[0] + ')' + (i[3] ? ' - The Gone' : ''); dl.appendChild(o); });
+  function findItem(s) {
+    s = s.trim().toLowerCase(); if (!s) return 0;
+    var m = s.replace(/\s*-\s*the gone$/, '').match(/\((\d+)\)\s*$/) || s.match(/^(\d+)$/); if (m && NAME[+m[1]]) return +m[1];
+    for (var k = 0; k < ITEMS.length; k++) if (ITEMS[k][1].toLowerCase() === s) return ITEMS[k][0];
+    var part = ITEMS.filter(function (i) { return i[1].toLowerCase().indexOf(s) >= 0; });
+    return part.length === 1 ? part[0][0] : 0;
+  }
+  function addItem() {
+    var c = list[sel]; if (!c) return;
+    var id = findItem($('f-item').value);
+    if (!id) { say('msg', 'No item called "' + esc($('f-item').value) + '": pick one from the suggestions.'); return; }
+    if (c.items.length >= 20) { say('msg', 'At most 20 starting items.'); return; }
+    say(); c.items.push(id); $('f-item').value = ''; render(); $('f-item').focus();
+  }
+  $('additem').addEventListener('click', addItem);
+  $('f-item').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addItem(); } });
+  $('chips').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b && list[sel]) { list[sel].items.splice(+b.dataset.rm, 1); render(); } });
+
+  function readFile(f, cb) { var r = new FileReader(); r.onload = function () { cb(String(r.result)); }; r.readAsText(f); }
+  function openText(text, name) {
+    var got = parse(text);
+    list = got.slice(0, MAX); sel = list.length ? 0 : -1; $('adv').open = !!(list[0] && Object.keys(list[0].stats).length); render();
+    say(got.length ? 'done' : 'msg', got.length ? 'Opened <b>' + esc(name) + '</b>: ' + list.length + (list.length === 1 ? ' challenge' : ' challenges') + (got.length > MAX ? ' (only the first ' + MAX + ' are kept)' : '') + '.' : '<b>' + esc(name) + '</b> has no challenges in it.');
+  }
+  $('open').addEventListener('click', function () { $('file').click(); });
+  $('file').addEventListener('change', function () { var f = this.files[0]; if (f) readFile(f, function (t) { openText(t, f.name); }); this.value = ''; });
+  $('new').addEventListener('click', function () {
+    if (list.length && !confirm('Start a new, empty list? The current one is lost unless you saved it.')) return;
+    list = []; sel = -1; render(); say();
+  });
+  $('save').addEventListener('click', function () {
+    var blob = new Blob([serialize()], { type: 'text/plain' }), a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'customchallenges.txt';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+    say('done', 'Saved <b>customchallenges.txt</b> to your downloads. Put it in the game\'s <code>mods</code> folder, replacing the one there.');
+  });
+  ['dragenter', 'dragover'].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); document.body.classList.add('over'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); if (t === 'drop' || e.target === document.documentElement || !e.relatedTarget) document.body.classList.remove('over'); }); });
+  document.addEventListener('drop', function (e) { var f = e.dataTransfer.files[0]; if (f) readFile(f, function (t) { openText(t, f.name); }); });
+  render();
+})();
+</script>
+</body>
+</html>

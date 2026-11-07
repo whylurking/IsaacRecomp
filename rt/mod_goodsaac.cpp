@@ -53,7 +53,22 @@
 //                  Cathedral comes from _root.heaven == 2, which every room of that floor clears. Kept for it;
 //   secrets_keys   (og, wotl) the secrets screen moved two secrets per arrow key: its buttons react to the key
 //                  (keyPress) and its onEnterFrame too (Eternal took the key off the buttons). One step;
-//   select_click   (all) changing character with the keys made no sound (the arrows' buttons play it on a click).
+//   start_spot     (all) a new run started where the player last came into a room in the run before (_root.playerx
+//                  / playery: set as he goes through a door, never cleared; the first run finds them undefined and
+//                  puts him at his usual start). Cleared whenever the main menu shows (Continuum sets them after that
+//                  for the run it brings back);
+//   familiar_shots (all) a familiar's shots flew off at a mad speed, the wrong way, or not at all once
+//                  Robo-Baby was there: the familiars shoot in plff, one after another, along _root.a.xenf / yenf
+//                  (the player's aim), and Robo-Baby's laser (lasershow) leaves there the way to its target, not a
+//                  direction: the ones after it (Harlequin Baby's two shots, Sister Maggy's...) went that way, as
+//                  fast as the target was far. Inside plff, lasershow puts xenf / yenf back as it found them;
+//   familiars      (all) no limit to the babies that follow him, as in Rebirth: the game makes Math.min(3, the
+//                  baby items he has) of them (2 in the original), and friends gives each its kind (`baa`) from
+//                  the items, skipping the last two kinds given - so with more items some never showed. The missing
+//                  babies are made as the game makes them (create(..., 3), `minions` + 1) and their kinds set so
+//                  that each baby item (each copy of it) has one;
+//   select_click   (wotl) changing character with the keys made no sound (the arrows' buttons play it on a click).
+//                  The original and Eternal play it themselves (in Eternal this made it sound twice);
 #include "mods.h"
 #include "mod_hook.h"
 #include "core.h"
@@ -78,7 +93,7 @@ bool isOld() { return !g_game || strcmp(g_game->tag, "eternal") != 0; }   // og 
 
 struct Opts { bool subtitles = true, names = true, eternalHeart = true, momVoice = true, challengeMusic = true,
               heartName = true, lastWill = true, shopPills = true, challengePause = true, momRed = true, gamekidHead = true,
-              daddyStomps = true, footShadow = true, unlocks = true, momDeals = true, breakfast = true, xlDepths = true, forgetMeNow = true, secretsKeys = true, selectClick = true; } g_o;
+              daddyStomps = true, footShadow = true, unlocks = true, momDeals = true, breakfast = true, xlDepths = true, forgetMeNow = true, secretsKeys = true, selectClick = true, startSpot = true, familiarShots = true, familiars = true; } g_o;
 bool isEternal() { return g_game && strcmp(g_game->tag, "eternal") == 0; }
 bool isOg() { return g_game && strcmp(g_game->tag, "og") == 0; }
 Value arrAt(const Value& a, int i) {
@@ -404,6 +419,110 @@ void secretsKeysTick(const Value& R) {
     g_axLast = ax;
 }
 
+// ---- familiar_shots: Robo-Baby's laser no longer turns the next familiars' shots
+GameHook g_wPlff{"plff"}, g_wLaser{"lasershow"};
+int g_inPlff = 0;
+Value wPlff(Act& ac, Value t, int argc, Value* argv) {
+    g_inPlff++;
+    Value r = callGameOrig(g_wPlff, ac, t, argc, argv);
+    g_inPlff--;
+    return r;
+}
+Value wLaser(Act& ac, Value t, int argc, Value* argv) {
+    if (g_inPlff == 0) return callGameOrig(g_wLaser, ac, t, argc, argv);
+    Value a((Object*)g_wLaser.a);
+    Value x = V(a, "xenf"), y = V(a, "yenf");
+    Value r = callGameOrig(g_wLaser, ac, t, argc, argv);
+    S(a, "xenf", x); S(a, "yenf", y);
+    return r;
+}
+
+Value callA(const Value& obj, const char* fn, std::initializer_list<Value> args) {
+    std::vector<Value> av(args);
+    Act ac{vm.globalScope, VUNDEF, vm.root, nullptr};
+    Value r = callMethodK(ac, obj, intern(fn), (int)av.size(), av.data());
+    runActions();
+    return r;
+}
+// ---- familiars: as many babies as baby items
+GameHook g_wFriends{"friends"};
+const int kBabies[10][2] = {{8, 0}, {67, 1}, {95, 2}, {99, 3}, {100, 4}, {113, 5}, {163, 6}, {167, 7}, {174, 8}, {188, 9}};   // item, kind
+std::map<Object*, int> g_babyKind;   // each baby's kind (`baa`), while there are more than the game's own number
+Value wFriends(Act& ac, Value t, int argc, Value* argv);
+// a baby: a follower (s 3) that isn't one of the others. Every follower is made by create(..., 3) and gets `baa`;
+// the others are marked when made (onEnterFrame): The Relic and its kind `mon`, Dead Cat's `cat`, Cube of Meat's
+// `meat`, Guardian Angel's `ang`, the flies' `fly`, `bum`, `eye`, `hairb`, `hol`, `ni`, `bird`, `ggho`, `dad`, `maga`,
+// `bluf` (friends' own test is !maga && !bum && !hol && !cat && !mon after its branches for the rest)
+bool isBaby(const Value& e) {
+    static const char* kOthers[] = {"mon", "cat", "meat", "ang", "fly", "bum", "eye", "hairb", "hol", "ni", "bird", "ggho", "dad", "maga", "bluf"};
+    if (!e.isObj() || num(V(e, "s")) != 3 || V(e, "baa").t != T_NUM || truthy(V(e, "done"))) return false;
+    for (const char* k : kOthers) if (truthy(V(e, k))) return false;
+    return true;
+}
+void familiarsTick(const Value& R, const Value& a) {
+    int cap = isOg() ? 2 : 3;
+    Value ups = V(R, "ups"), p = V(a, "player"), balls = V(a, "ball");
+    if (!ups.isObj() || !p.isObj() || !balls.isObj() || balls.o->kind != OK_ARRAY) return;
+    std::vector<int> want;   // the kinds he should have, one per baby item (and copy)
+    for (auto& b : kBabies) {
+        if (isOg() && b[0] > 113) continue;
+        int n = (int)num(getMem(ups, Value((double)b[0])), 0);
+        for (int i = 0; i < n && want.size() < 40; i++) want.push_back(b[1]);
+    }
+    if ((int)want.size() <= cap) { g_babyKind.clear(); return; }   // (the game's own number: nothing to do)
+    hookGameFn(g_wFriends, a, wFriends);
+    std::vector<Value> babies;
+    for (const Value& e : ((Array*)balls.o)->el)
+        if (isBaby(e)) babies.push_back(e);
+    double minions = num(V(a, "minions"), 0);
+    Value d = V(p, "d");
+    bool still = num(V(d, "_currentframe"), 1) < 3;   // (the game makes them only then: not while he changes room)
+    if ((int)babies.size() < (int)want.size() && minions >= cap && minions < want.size() && still) {
+        S(a, "minions", Value(minions + 1));
+        callA(a, "create", {Value(num(V(p, "xp"))), Value(num(V(p, "yp")) - 10), Value(0.0), Value(0.0), Value(0.0), Value(0.0), Value(3.0)});
+        return;   // (its kind comes from friends next image; set below after that)
+    }
+    // the kinds: friends works each baby's out again every image (from the items, skipping the last two given), so
+    // each baby keeps one here - the same as long as it is needed - and friends' choice is replaced right after it
+    std::map<Object*, int> keep;
+    std::vector<int> need = want;
+    for (const Value& b : babies) {
+        auto it = g_babyKind.find(b.o);
+        if (it == g_babyKind.end()) continue;
+        auto n = std::find(need.begin(), need.end(), it->second);
+        if (n != need.end()) { keep[b.o] = it->second; need.erase(n); }
+    }
+    for (const Value& b : babies) if (!keep.count(b.o) && !need.empty()) { keep[b.o] = need.front(); need.erase(need.begin()); }
+    g_babyKind.swap(keep);
+}
+Value wFriends(Act& ac, Value t, int argc, Value* argv) {
+    // friends picks the kind from the items (in its own order, skipping the last two it gave: lastbb, lastbbb); for
+    // the call on one of these babies it sees only that baby's item and no last ones, so it picks that kind - and
+    // moves and draws it as that kind - and then everything is put back
+    Value a((Object*)g_wFriends.a), R = root();
+    Value trg = V(a, "trg"), ups = V(a, "ups").isObj() ? V(a, "ups") : V(R, "ups");
+    auto it = trg.isObj() ? g_babyKind.find(trg.o) : g_babyKind.end();
+    if (it == g_babyKind.end() || !ups.isObj()) return callGameOrig(g_wFriends, ac, t, argc, argv);
+    Value saved[10];
+    for (int i = 0; i < 10; i++) { Value k((double)kBabies[i][0]); saved[i] = getMem(ups, k); setMem(ups, k, Value(kBabies[i][1] == it->second ? 1.0 : 0.0)); }
+    Value lb = V(a, "lastbb"), lbb = V(a, "lastbbb");
+    S(a, "lastbb", Value(-1.0)); S(a, "lastbbb", Value(-1.0));
+    Value r = callGameOrig(g_wFriends, ac, t, argc, argv);
+    for (int i = 0; i < 10; i++) setMem(ups, Value((double)kBabies[i][0]), saved[i]);
+    S(a, "lastbb", lb); S(a, "lastbbb", lbb);
+    return r;
+}
+
+// ---- start_spot: no place left over from the last run
+int g_lastRootFrame = 0;
+void startSpotTick(const Value& R) {
+    int frame = vm.root->kind == OK_CLIP ? ((MovieClip*)vm.root)->cur : 0;
+    if (frame == 5 && g_lastRootFrame != 5 && (!V(R, "playerx").isUndef() || !V(R, "playery").isUndef())) {
+        S(R, "playerx", VUNDEF); S(R, "playery", VUNDEF); S(R, "door", VUNDEF);
+    }
+    g_lastRootFrame = frame;
+}
+
 // ---- select_click: the character select's sound when the keys change the character
 double g_skinLast = -1;
 void selectClickTick(const Value& R) {
@@ -416,6 +535,19 @@ void selectClickTick(const Value& R) {
 }
 }  // namespace
 
+void goodsaacDebug(const std::string&) {   // (tests: "eval gsaac babies") every follower, and which are babies
+    Value R = root(), a = V(R, "a"), balls = V(a, "ball");
+    if (!balls.isObj() || balls.o->kind != OK_ARRAY) return;
+    int n = 0;
+    for (const Value& e : ((Array*)balls.o)->el) {
+        if (!e.isObj() || num(V(e, "s")) != 3 || truthy(V(e, "done"))) continue;
+        bool b = isBaby(e); n += b;
+        auto it = g_babyKind.find(e.o);
+        logf("[gsaac] follower baa %g mon %g baby %d kept %d\n", num(V(e, "baa")), num(V(e, "mon")), (int)b, it == g_babyKind.end() ? -1 : it->second);
+    }
+    logf("[gsaac] babies %d minions %g\n", n, num(V(a, "minions")));
+}
+
 void goodsaacTick(const ModInfo& m) {
     auto on = [&](const char* k) { std::string v = m.opt(k, "1"); return !(v == "0" || v == "no" || v == "off" || v == "false"); };
     g_o.subtitles = on("subtitles"); g_o.names = on("names"); g_o.eternalHeart = on("eternal_heart");
@@ -424,6 +556,7 @@ void goodsaacTick(const ModInfo& m) {
     g_o.challengePause = on("challenge_pause"); g_o.momRed = on("mom_red"); g_o.gamekidHead = on("gamekid_head");
     g_o.daddyStomps = on("daddy_stomps"); g_o.footShadow = on("foot_shadow"); g_o.momDeals = on("mom_deals"); g_o.breakfast = on("breakfast"); g_o.unlocks = on("unlocks"); g_o.xlDepths = on("xl_depths");
     g_o.forgetMeNow = on("forget_me_now"); g_o.secretsKeys = on("secrets_keys"); g_o.selectClick = on("select_click");
+    g_o.startSpot = on("start_spot"); g_o.familiarShots = on("familiar_shots"); g_o.familiars = on("familiars");
     g_tick++;
     bool old = isOld();
     Value R = root(), a = V(R, "a");
@@ -432,7 +565,8 @@ void goodsaacTick(const ModInfo& m) {
     if (g_o.challengeMusic) challengeMusicTick();
     if (g_o.heartName) heartNameTick(R);
     if (g_o.secretsKeys && !isEternal()) secretsKeysTick(R);
-    if (g_o.selectClick) selectClickTick(R);
+    if (g_o.selectClick && !isEternal()) selectClickTick(R);   // (Eternal plays it itself: it sounded twice)
+    if (g_o.startSpot) startSpotTick(R);
     if (!a.isObj()) return;
     if (g_o.lastWill) lastWillTick(R, a);
     if (g_o.shopPills && !isOg()) shopPillsTick(R, a);
@@ -445,6 +579,8 @@ void goodsaacTick(const ModInfo& m) {
     if (g_o.breakfast) hookGameFn(g_wItz, a, wItz);
     if (g_o.momDeals) momDealsTick(R, a);
     if (g_o.forgetMeNow && !isOg()) hookGameFn(g_wMoveon, a, wMoveon);
+    if (g_o.familiars) familiarsTick(R, a);
+    if (g_o.familiarShots) { hookGameFn(g_wPlff, a, wPlff); hookGameFn(g_wLaser, a, wLaser); }
     if (old && g_o.names) hookGameFn(g_wSt11, a, wSt11);
     if ((old && g_o.eternalHeart) || g_o.footShadow) hookGameFn(g_wHurt, a, wHurt);
 }

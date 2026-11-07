@@ -163,11 +163,25 @@
 "author": "IsaacRecomp"
 },
 {
+"file": "ChallengeLab.mod",
+"id": "challengelab",
+"name": "Challenge Lab",
+"version": "1.1",
+"description": "A second page for the challenge list (\"To Do List\", Wrath of the Lamb and Eternal Edition): an arrow next to Back, like the collection's, turns to the Challenge Lab list, with up to 8 challenges of your own; the same arrow there goes back. Make them with tools/challenge_lab_maker.html, which writes mods/customchallenges.txt: each one has its name, where it ends (Mom, Mom's Heart, Isaac, Satan or The Chest), the character (The Gone too, with his mod on; Isaac without it), the starting items (The Gone's too, with his mod on) and trinket - the character starts with those only -, the rules the game's own challenges use (darkness, the labyrinth or the Lost on every floor, fewer or no treasure rooms, bad luck), Eternal Edition's hard mode, the Curse of the Blind (no tears of your own; familiars still shoot) and, as an advanced option, other base stats (speed, tears, damage, range, shot speed, luck, hearts, pickups). They can all be played from the start, and their runs are runs apart: nothing in them unlocks anything or counts in your statistics, endings, secrets or collection, and the item pools have every item, as if all were unlocked. Finished ones are crossed out (complete = 1 in customchallenges.txt). Eight challenges come with it, from fun to very hard (written into the mods folder when it has no list yet). Works with Continuum (a challenge left and resumed keeps its rules).",
+"warning": "",
+"help": "",
+"category": "Gameplay",
+"summary": "Up to 8 challenges of your own, on a new page of the challenge list.",
+"options": [],
+"author": "IsaacRecomp",
+"engine": "challengelab"
+},
+{
 "file": "Continuum.mod",
 "id": "continuum",
 "name": "Continuum",
 "version": "1.0",
-"description": "Lets you stop a run and come back to it later. On the pause screen, \"Exit to main menu\" asks \"Are you sure you want me to die?\": \"Yes\" ends the run as always, and \"No\", in a room with no enemies left, saves the run and goes to the main menu. The next time you press Start there, you are back in that run, in that room, with everything you had. You appear in the middle of the room, or, if something is in the way (a rock, a pit, the trapdoor, an item), on the free spot nearest to the door you came in by. In a room with enemies, \"No\" does what it always did (back to the run). A click outside the note, or the controller's B / circle, takes you back to the pause screen. The run is kept in saves/continuum_<game>.txt until you carry on with it. Works with The Gone and BaseTime (the clocks carry on).",
+"description": "Lets you stop a run and come back to it later. On the pause screen, \"Exit to main menu\" asks \"Are you sure you want me to die?\": \"Yes\" ends the run as always, and \"No\", in a room with no enemies left, saves the run and goes to the main menu. The next time you press Start there, you are back in that run, in that room, with everything you had. You appear in front of the door you last came in by (in the middle of the room in a floor's first room, before you have been anywhere else); if something is in the way now, on the free spot nearest to it. In a room with enemies, \"No\" does what it always did (back to the run). A click outside the note, or the controller's B / circle, takes you back to the pause screen. The run is kept in saves/continuum_<game>.txt until you carry on with it. Works with The Gone and BaseTime (the clocks carry on).",
 "warning": "",
 "help": "",
 "category": "Gameplay",
@@ -214,8 +228,8 @@
 "file": "GoodSaac.mod",
 "id": "goodsaac",
 "name": "Good Saac",
-"version": "1.2",
-"description": "Fixes known bugs of the Flash games. In the original and Wrath of the Lamb: the wrong lines under some items' names when you pick them up (Sacred Heart said \"Tears Up\", MEAT! \"Tears + HP Up\"...), \"Magdalena\" and \"XXX\" in mini-boss banners, an Eternal Heart that didn't save ??? (or anyone with no heart containers left), Mom's Heart saying \"Isaac!\" over and over in its last phase. In every version: the challenge room's music going on after you leave the room by teleport or an extra life. Also: \"<3\" with no name in the collection, an empty picture in the death diary (Razor Blade, \"killed by nothing\"), pills for sale that change colour when bought, challenge waves coming all at once after a pause, a red screen that stays after Mom, The Gamekid leaving the head flipped, Daddy Longlegs stomping only once on bosses that don't move, Mom's or Satan's foot hurting you after they die, secrets unlocked by the wrong deed (Headless Horseman, The Chest with ??? and Eve), XL Depths' first boss treated as Mom, Forget Me Now turning the Cathedral into Sheol, two secrets per key on the secrets screen no sound when choosing a character with the keys, the devil / angel room door hidden after Mom, and the game freezing when no item is left to give (it gives Breakfast, as Rebirth does). Each fix can be turned off on its own.",
+"version": "1.4",
+"description": "Fixes known bugs of the Flash games. In the original and Wrath of the Lamb: the wrong lines under some items' names when you pick them up (Sacred Heart said \"Tears Up\", MEAT! \"Tears + HP Up\"...), \"Magdalena\" and \"XXX\" in mini-boss banners, an Eternal Heart that didn't save ??? (or anyone with no heart containers left), Mom's Heart saying \"Isaac!\" over and over in its last phase. In every version: the challenge room's music going on after you leave the room by teleport or an extra life. Also: \"<3\" with no name in the collection, an empty picture in the death diary (Razor Blade, \"killed by nothing\"), pills for sale that change colour when bought, challenge waves coming all at once after a pause, a red screen that stays after Mom, The Gamekid leaving the head flipped, Daddy Longlegs stomping only once on bosses that don't move, Mom's or Satan's foot hurting you after they die, secrets unlocked by the wrong deed (Headless Horseman, The Chest with ??? and Eve), XL Depths' first boss treated as Mom, Forget Me Now turning the Cathedral into Sheol, two secrets per key on the secrets screen, no sound when choosing a character with the keys (Wrath of the Lamb), a new run starting in the doorway you last came in by in the run before, the devil / angel room door hidden after Mom, the game freezing when no item is left to give (it gives Breakfast, as Rebirth does), and familiars' shots going the wrong way, far too fast or not at all next to Robo-Baby (its laser left the wrong aim for the familiars after it). One improvement, as in Rebirth: no limit to the babies that follow you (the game has three at most, two in the original). Each fix can be turned off on its own.",
 "warning": "",
 "help": "",
 "category": "Fixes",
@@ -317,9 +331,24 @@
 "note": "secrets_keys = 1 moves one secret per arrow key on the secrets screen (0: no)"
 },
 {
+"key": "start_spot",
+"value": "1",
+"note": "start_spot = 1 starts every new run where the first one starts, not where you last came into a room (0: no)"
+},
+{
 "key": "select_click",
 "value": "1",
-"note": "select_click = 1 plays the click when you change character with the keys (0: no)"
+"note": "select_click = 1 plays the click when you change character with the keys (Wrath of the Lamb) (0: no)"
+},
+{
+"key": "familiar_shots",
+"value": "1",
+"note": "familiar_shots = 1 keeps familiars' shots going where you aim when Robo-Baby is there too (0: no)"
+},
+{
+"key": "familiars",
+"value": "1",
+"note": "familiars = 1 lets every baby item have its baby, as in Rebirth (the game has three at most, two in the original) (0: no)"
 }
 ],
 "author": "IsaacRecomp",
@@ -355,6 +384,30 @@
 "key": "cards",
 "value": "1",
 "note": "cards = 1 shows the card over tarot and playing cards too (0: not over them)"
+}
+],
+"author": "IsaacRecomp"
+},
+{
+"file": "Marksman.mod",
+"id": "marksman",
+"name": "Marksman",
+"version": "1.0",
+"description": "Your progress with each character, as Rebirth's completion marks. The character select gets one more note (in Eternal Edition between the hard mode note and Select!) with a mark for each ending - Mom (a footprint), Mom's Heart (a heart), Isaac (a cross), Satan (an upside-down cross) and ??? (a question mark); the original game has only Mom and Mom's Heart; a mark only appears once that boss has been met in some run, so nothing is spoiled -, for the character shown: faint until that character has reached it, written in once it has, red when it was in Eternal Edition's hard mode. The Gone has his own (with his mod on). An ending counts when its last boss is beaten (its room cleared) or the game shows it, in normal runs: not in challenges, Challenge Lab or with GenesisConsole on. Only endings reached with the mod on count (the game's save doesn't keep them by character). During a challenge (the game's and Challenge Lab's), the goal's mark is shown small in the HUD band, top left (with WideSaac's Hyper Zoom, in the top left corner). Kept in saves/marksman_<game>.txt. It only reads the game: runs play exactly the same with it on.",
+"warning": "",
+"help": "",
+"category": "HUD",
+"summary": "Completion marks for each character, as in Rebirth, and the challenge's goal on screen.",
+"options": [
+{
+"key": "note",
+"value": "1",
+"note": "note = 1 shows the marks note on the character select (0: no)"
+},
+{
+"key": "challenge_goal",
+"value": "1",
+"note": "challenge_goal = 1 shows the goal's mark during a challenge (0: no)"
 }
 ],
 "author": "IsaacRecomp"
@@ -461,8 +514,8 @@
 "file": "TheGone.mod",
 "id": "thegone",
 "name": "The Gone",
-"version": "1.3",
-"description": "A new character, in the spirit of Rebirth's The Lost: on the character select screen, one more place after the last character, with his card like the others' (name, stats, starting item). The Gone is a pale Isaac (3.5 damage, Isaac's speed) who starts with Spirit of the Night (he flies and his tears go through rocks; in the original game, Transcendence and the Ouija Board) and has no hearts at all: he can't pick up hearts of any kind, gain heart containers or extra lives, and the first hit kills him. In devil rooms he can take one deal for free, and then the other deals disappear. Random on the character select screen can pick him too. He has to be unlocked first: clear three floors in a row without getting hit or picking up a heart. Beating Mom's Heart with him unlocks the card Negative Isaac (a 15-second shield), beating it with no item but his own unlocks Nothing (treasure rooms: some enemies are just not there), beating Isaac unlocks The Void Shard (devil rooms: some enemy shots go through you) and beating Satan unlocks Black Mirror (treasure rooms: the room turns negative and the enemies fight each other). What is unlocked is kept in saves/thegone_<game>.txt.",
+"version": "1.4",
+"description": "A new character, in the spirit of Rebirth's The Lost: on the character select screen, one more place after the last character, with his card like the others' (name, stats, starting item). The Gone is a pale Isaac (3.5 damage, Isaac's speed) who starts with Spirit of the Night (he flies and his tears go through rocks; in the original game, Transcendence and the Ouija Board) and has no hearts at all: he can't pick up hearts of any kind, gain heart containers or extra lives, and the first hit kills him. In devil rooms he can take one deal for free, and then the other deals disappear. Random on the character select screen can pick him too. He has to be unlocked first: clear three floors in a row without getting hit or picking up a heart. Beating Mom's Heart with him unlocks the card Negative Isaac (a 15-second shield), beating it with no item but his own unlocks Nothing (treasure rooms: some enemies are just not there), beating Isaac unlocks The Void Shard (devil rooms: some enemy shots go through you) and beating Satan unlocks Black Mirror (treasure rooms: the room turns negative, half the enemies turn round - what came for you keeps away and the other way round - and the others go for each other). What is unlocked is kept in saves/thegone_<game>.txt.",
 "warning": "",
 "help": "",
 "category": "Characters",

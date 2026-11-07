@@ -169,11 +169,51 @@ double damageOf(const Value& root, const Value& a) {
     return d;
 }
 
+// The tears as the game will have them at the next shot: firr(o) works them out from the items into o.fire (and only
+// copies that to _root.firra when o is the player, when a tear is fired), so it is called on an object of our own.
+// It also sets the variable f1, put back as it was. NAN when the game has no firr.
+double tearsOf(const Value& root, const Value& a) {
+    Value fn = V(a, "firr");
+    if (!fn.isObj() || fn.o->kind != OK_FUNCTION) return NAN;
+    Str* kF1 = intern("f1");
+    bool hadA = hasProp(a.o, kF1), hadR = hasProp(root.o, kF1);
+    Value f1a = getMemK(a, kF1), f1r = getMemK(root, kF1);
+    uint32_t rs; uint64_t rc; rngSave(&rs, &rc);
+    Object* tmp = gcNew<Object>(protos::object);
+    Value arg((Object*)tmp);
+    Act ac{vm.globalScope, VUNDEF, vm.root, nullptr};
+    callMethodK(ac, a, intern("firr"), 1, &arg);
+    rngRestore(rs, rc);
+    if (hadA) setMemK(a, kF1, f1a); else a.o->props.erase(kF1);
+    if (hadR) setMemK(root, kF1, f1r); else root.o->props.erase(kF1);
+    double fire = toNum(getMemK(arg, intern("fire")));
+    return std::isfinite(fire) ? 30.0 / (fire + 1) : NAN;
+}
+// The part of the range (_root.firrr) the items and the character make, as create() works it out for each tear
+// (the same in the three games but for the items each one has): the rest of firrr is the tear's random fall. Range is
+// shown as the last tear's firrr moved by what this changed since that tear, so a range item shows at once.
+double rangeItems(const Value& root, const Value& a, const std::string& game) {
+    Value upsV = V(a, "ups");
+    auto u = [&](int i) -> double {
+        if (!upsV.isObj() || upsV.o->kind != OK_ARRAY) return 0;
+        Array* arr = (Array*)upsV.o;
+        return i < (int)arr->el.size() ? num(arr->el[i], 0) : 0;
+    };
+    double r4 = u(12) + u(30) + u(31) + u(29) + 3 * u(71) + u(101) + u(110) + u(121);
+    if (game != "og") r4 += 1.5 * u(182) + u(197);
+    if (game == "eternal") r4 += u(14) + u(189);
+    r4 *= 0.5;
+    double sk = num(V(root, "skiner"), 0);
+    double ch = u(6) ? -13 : sk == 2 ? -6 : (sk == 6 && game != "og") ? -5 : 0;   // (dy += 13 / 6 / 5)
+    return 5 * (u(12) - u(71) + u(30) + u(31) + u(29)) + 5.5 * r4 + ch;   // firrr = -5 dm - dy
+}
+double g_tearFirrr = NAN, g_tearItems = 0;   // firrr of the last tear, and rangeItems() then
+
 void removeClip() {
     if (g_clip && !g_clip->removed && g_clip->parent) removeObject(g_clip);
     g_clip = nullptr;
     for (auto& r : g_rows) { r.sym = nullptr; r.shadow = r.text = r.up = r.upShadow = r.down = r.downShadow = nullptr; r.prev = NAN; r.deltaUntil = 0; }
-    g_damage = NAN; g_range = NAN;
+    g_damage = NAN; g_range = NAN; g_tearFirrr = NAN;
 }
 
 EditTextObj* text(MovieClip* c, int& depth, double x, double y, float w, float size, uint32_t argb, int align) {
@@ -267,8 +307,13 @@ void computeStats(const Value& root, const Value& a, const std::string& game, do
     Value luck = V(root, "luck");
     vals[0] = num(V(root, "playsp"), 1);
     vals[1] = 30.0 / (num(V(root, "firra"), 10) + 1);
+    { double t = tearsOf(root, a); if (std::isfinite(t)) vals[1] = t; }
     vals[2] = damage;
-    vals[3] = num(V(root, "firrr"), 23) * 6.5 / 23.0;
+    {
+        double firrr = num(V(root, "firrr"), 23), items = rangeItems(root, a, game);
+        if (firrr != g_tearFirrr) { g_tearFirrr = firrr; g_tearItems = items; }   // (a new tear)
+        vals[3] = (firrr + items - g_tearItems) * 6.5 / 23.0;
+    }
     vals[4] = shot;
     vals[5] = luck.t == T_UNDEF ? NAN : num(luck, 0);
     // (range and shot speed fixed with GenesisConsole only reach the game's variables with the next tear)

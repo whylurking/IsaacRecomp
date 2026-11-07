@@ -1,12 +1,12 @@
 ; IsaacRecomp mod. Turn it on or off with tools/mod_manager.html (or "mods =" in isaac.ini).
 id = goodsaac
 name = Good Saac
-version = 1.2
+version = 1.4
 author = IsaacRecomp
 category = Fixes
 summary = Fixes bugs of the original games, most of them the way Eternal Edition later did.
 engine = goodsaac
-description = Fixes known bugs of the Flash games. In the original and Wrath of the Lamb: the wrong lines under some items' names when you pick them up (Sacred Heart said "Tears Up", MEAT! "Tears + HP Up"...), "Magdalena" and "XXX" in mini-boss banners, an Eternal Heart that didn't save ??? (or anyone with no heart containers left), Mom's Heart saying "Isaac!" over and over in its last phase. In every version: the challenge room's music going on after you leave the room by teleport or an extra life. Also: "<3" with no name in the collection, an empty picture in the death diary (Razor Blade, "killed by nothing"), pills for sale that change colour when bought, challenge waves coming all at once after a pause, a red screen that stays after Mom, The Gamekid leaving the head flipped, Daddy Longlegs stomping only once on bosses that don't move, Mom's or Satan's foot hurting you after they die, secrets unlocked by the wrong deed (Headless Horseman, The Chest with ??? and Eve), XL Depths' first boss treated as Mom, Forget Me Now turning the Cathedral into Sheol, two secrets per key on the secrets screen no sound when choosing a character with the keys, the devil / angel room door hidden after Mom, and the game freezing when no item is left to give (it gives Breakfast, as Rebirth does). Each fix can be turned off on its own.
+description = Fixes known bugs of the Flash games. In the original and Wrath of the Lamb: the wrong lines under some items' names when you pick them up (Sacred Heart said "Tears Up", MEAT! "Tears + HP Up"...), "Magdalena" and "XXX" in mini-boss banners, an Eternal Heart that didn't save ??? (or anyone with no heart containers left), Mom's Heart saying "Isaac!" over and over in its last phase. In every version: the challenge room's music going on after you leave the room by teleport or an extra life. Also: "<3" with no name in the collection, an empty picture in the death diary (Razor Blade, "killed by nothing"), pills for sale that change colour when bought, challenge waves coming all at once after a pause, a red screen that stays after Mom, The Gamekid leaving the head flipped, Daddy Longlegs stomping only once on bosses that don't move, Mom's or Satan's foot hurting you after they die, secrets unlocked by the wrong deed (Headless Horseman, The Chest with ??? and Eve), XL Depths' first boss treated as Mom, Forget Me Now turning the Cathedral into Sheol, two secrets per key on the secrets screen, no sound when choosing a character with the keys (Wrath of the Lamb), a new run starting in the doorway you last came in by in the run before, the devil / angel room door hidden after Mom, the game freezing when no item is left to give (it gives Breakfast, as Rebirth does), and familiars' shots going the wrong way, far too fast or not at all next to Robo-Baby (its laser left the wrong aim for the familiars after it). One improvement, as in Rebirth: no limit to the babies that follow you (the game has three at most, two in the original). Each fix can be turned off on its own.
 
 ; options
 ; subtitles = 1 corrects the line under the name of 14 items (original and Wrath of the Lamb) (0: no)
@@ -47,5 +47,11 @@ xl_depths = 1
 forget_me_now = 1
 ; secrets_keys = 1 moves one secret per arrow key on the secrets screen (0: no)
 secrets_keys = 1
-; select_click = 1 plays the click when you change character with the keys (0: no)
+; start_spot = 1 starts every new run where the first one starts, not where you last came into a room (0: no)
+start_spot = 1
+; select_click = 1 plays the click when you change character with the keys (Wrath of the Lamb) (0: no)
 select_click = 1
+; familiar_shots = 1 keeps familiars' shots going where you aim when Robo-Baby is there too (0: no)
+familiar_shots = 1
+; familiars = 1 lets every baby item have its baby, as in Rebirth (the game has three at most, two in the original) (0: no)
+familiars = 1

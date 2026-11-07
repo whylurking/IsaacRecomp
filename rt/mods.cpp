@@ -25,7 +25,7 @@ static bool validId(const std::string& s) {
     for (char c : s) if (!isalnum((unsigned char)c) && c != '_' && c != '-') return false;
     return true;
 }
-static const char* kEngines[] = {"staton", "genesis", "widesaac", "pilllog", "itemnomicon", "basetime", "thegone", "rainbow", "goodsaac", "continuum"};   // the built-in engines (mods.h)
+static const char* kEngines[] = {"staton", "genesis", "widesaac", "pilllog", "itemnomicon", "basetime", "thegone", "rainbow", "goodsaac", "continuum", "challengelab", "marksman"};   // the built-in engines (mods.h)
 
 static bool parseMod(const std::string& path, const std::string& file, ModInfo& m) {
     FILE* f = platformFopen(path, "rb"); if (!f) return false;
@@ -123,7 +123,9 @@ static const struct { const char* file; const char* text; } kBuiltin[] = {
 #include "mods_builtin.inc"
     {nullptr, nullptr}};
 
+std::string g_modsDir;   // the mods folder (ending in a separator)
 void modsInit(const std::string& dir, const std::string& enabledList) {
+    g_modsDir = dir;
     g_mods.clear();
     std::vector<std::string> names;
     if (!platformListDir(dir, names)) { if (platformMkdir(dir.substr(0, dir.size() - 1))) logf("mods: created %s\n", dir.c_str()); }
@@ -298,7 +300,7 @@ static void hideUnplacedTears() {
 }
 
 void modsTick() {
-    { bool want = false; for (auto& m : g_mods) want |= m.enabled && (m.engine == "basetime" || m.engine == "thegone"); if (want) hookNewstart(); }
+    { bool want = false; for (auto& m : g_mods) want |= m.enabled && (m.engine == "basetime" || m.engine == "thegone" || m.engine == "challengelab"); if (want) hookNewstart(); }
     g_snapOv.clear();   // (each mod adds its snapshot-only changes again every tick)
     hideUnplacedTears();
     static const bool prof = getenv("ISAAC_MODPROF") != nullptr;   // (testing: time spent in each mod, at exit)
@@ -323,6 +325,8 @@ void modsTick() {
         else if (m.engine == "rainbow") rainbowTick(m);
         else if (m.engine == "goodsaac") goodsaacTick(m);
         else if (m.engine == "continuum") continuumTick(m);
+        else if (m.engine == "challengelab") challengelabTick(m);
+        else if (m.engine == "marksman") marksmanTick(m);
     }
 }
 // ---- wrapping the game's functions (mod_hook.h)

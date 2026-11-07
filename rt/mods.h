@@ -43,6 +43,10 @@ void thegoneTick(const ModInfo& m);
 void rainbowTick(const ModInfo& m);
 void goodsaacTick(const ModInfo& m);
 void continuumTick(const ModInfo& m);
+void challengelabTick(const ModInfo& m);
+void marksmanTick(const ModInfo& m);
+void marksmanDebug(const std::string& cmd);   // tests (script "eval marks ..."): tree [depth], state, add <char> <ending> <1|2>
+void challengelabDebug(const std::string& cmd);   // tests (script "eval clab ..."): state, lab, std, start <n>
 void continuumDebug(const std::string& cmd);   // tests (script "eval continuum ..."): keys, state
 uint32_t modsRunSerial();   // goes up each time the game starts a new run (newstart(true): Replay, R held...)
 float itemnomiconShown();   // how visible Itemnomicon's card is (0-1; logic thread): WideSaac's Minimap+ fades under it
@@ -80,5 +84,5 @@ uint16_t synthTextField(float w, float size, uint32_t argb, int align);
 uint16_t synthHandText(const std::string& text, float H, uint32_t argb, float* outW = nullptr);   // marker-style text, like the menus'   // align 0 left, 1 right, 2 center
 DisplayObject* synthPut(MovieClip* parent, uint16_t id, int depth, double x, double y, const char* name = nullptr);
 // (menuui.cpp) options a mod adds to the controller's choices on a menu screen: an object and its stage rectangle
-void menuSetExtras(const std::vector<std::pair<DisplayObject*, RectF>>& v);
+void menuSetExtras(const char* owner, const std::vector<std::pair<DisplayObject*, RectF>>& v);   // (owner: the mod)
 }

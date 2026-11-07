@@ -302,7 +302,12 @@ static bool itemIcon(ButtonObj* b) {
 }
 // (mods) more options drawn by a mod (The Gone's items in the collection): their stage rectangles, set every tick
 static std::vector<std::pair<DisplayObject*, RectF>> g_menuExtras;
-void menuSetExtras(const std::vector<std::pair<DisplayObject*, RectF>>& v) { g_menuExtras = v; }
+static std::map<std::string, std::vector<std::pair<DisplayObject*, RectF>>> g_extrasBy;   // (each mod's own)
+void menuSetExtras(const char* owner, const std::vector<std::pair<DisplayObject*, RectF>>& v) {
+    g_extrasBy[owner] = v;
+    g_menuExtras.clear();
+    for (auto& kv : g_extrasBy) g_menuExtras.insert(g_menuExtras.end(), kv.second.begin(), kv.second.end());
+}
 static std::vector<Cand> candidates() {
     std::vector<Cand> out;
     std::vector<ButtonObj*> bs; visibleButtons(bs);
@@ -359,7 +364,7 @@ static std::vector<Cand> candidates() {
         if (!dup) out.push_back(c);
     }
     if (!g_modalBtn)   // (a mod's options: on the screen it drew them on, not under a dialog)
-        for (auto& e : g_menuExtras) if (e.first && e.second.valid()) out.push_back({e.first, e.second, (e.second.x0 + e.second.x1) / 2, (e.second.y0 + e.second.y1) / 2, nullptr});
+        for (auto& e : g_menuExtras) if (e.first && e.second.valid()) out.push_back({e.first, e.second, (e.second.x0 + e.second.x1) / 2, (e.second.y0 + e.second.y1) / 2, e.first});   // (turns pink when selected, as the game's own)
     // under such a full-screen button, only what the mouse could still click: the pause screen's own options stay
     // in the display list under the in-game "are you sure?" note
     if (g_modalBtn) {
@@ -504,6 +509,14 @@ static MovieClip* charRing() {
         if (k->kind == OK_CLIP && ((MovieClip*)k)->childByName(intern("i0")) && ((MovieClip*)k)->childByName(intern("inc"))) return k->visible ? (MovieClip*)k : nullptr;
     return nullptr;
 }
+// the challenge list ("To Do List", _root.pauss on its frame 9, over the main menu): left / right go straight down
+// to Back. A mod can name another place for one of them (Challenge Lab: the arrow to its page and back)
+DisplayObject* (*g_challengeNavHook)(bool right) = nullptr;
+static bool challengeSheetOpen() {
+    if (vm.root->kind != OK_CLIP || ((MovieClip*)vm.root)->cur != 5) return false;
+    Value p = getMemK(Value((Object*)vm.root), intern("pauss"));
+    return p.isObj() && p.o->kind == OK_CLIP && ((MovieClip*)p.o)->visible && ((MovieClip*)p.o)->cur == 9;
+}
 void padNavEvent(int code) {
     if (code == NAV_OFF) { g_navOn = false; return; }
     if (g_uiOpen || g_gameplay) return;
@@ -523,6 +536,11 @@ void padNavEvent(int code) {
     if (!f) f = ensureFocus(cs);
     if (code == NAV_CONFIRM) { if (!fresh || cs.size() == 1) click(*f); return; }
     if (code == NAV_BACK) { goBack(cs); return; }
+    if ((code == NAV_LEFT || code == NAV_RIGHT) && challengeSheetOpen()) {
+        DisplayObject* t = g_challengeNavHook ? g_challengeNavHook(code == NAV_RIGHT) : nullptr;
+        for (auto& c : cs)
+            if (t ? c.d == t : isBackButton(c.d)) { g_focus = c.d; hover(c); return; }
+    }
     // the character select screen ("Who am I?"): left / right turn the ring of characters (the game's own arrow
     // keys); up / down go through its other options from top to bottom (Back, Hard mode, Select, Random)
     if (MovieClip* ring = charRing()) {
@@ -596,7 +614,9 @@ void menuUiTick(bool gameplay, bool inGame) {
 #ifdef __PSP__
     g_hand = false;   // (no mouse)
 #else
-    g_hand = !gameplay && !g_uiOpen && (topButtonAt(g_player.mouseX, g_player.mouseY) || labelHit(g_player.mouseX, g_player.mouseY));
+    extern bool (*g_modHandHook)(double x, double y);
+    g_hand = !gameplay && !g_uiOpen && (topButtonAt(g_player.mouseX, g_player.mouseY) || labelHit(g_player.mouseX, g_player.mouseY)
+        || (g_modHandHook && g_modHandHook(g_player.mouseX, g_player.mouseY)));
 #endif
     if (gameplay && !g_uiOpen) { removeLabel(); return; }
     updateRebindLabel();

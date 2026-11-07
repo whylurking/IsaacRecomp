@@ -54,6 +54,9 @@ int autoAimKey() {
 void debugEval(const std::string& e) {
     if (e == "wide minimap") { wideToggleMinimap(); logf("[wide] minimap %s\n", wideMinimapShown() ? "on" : "off"); return; }
     if (e.compare(0, 8, "genesis ") == 0) { genesisDebug(e.substr(8)); return; }
+    if (e.compare(0, 6, "gsaac ") == 0) { void goodsaacDebug(const std::string&); goodsaacDebug(e.substr(6)); return; }   // (Good Saac: babies)
+    if (e.compare(0, 6, "marks ") == 0) { marksmanDebug(e.substr(6)); return; }   // (Marksman)
+    if (e.compare(0, 5, "clab ") == 0) { challengelabDebug(e.substr(5)); return; }   // (Challenge Lab: state, lab, std, start <n>)
     if (e.compare(0, 10, "continuum ") == 0) { continuumDebug(e.substr(10)); return; }   // (Continuum: keys, state)   // (GenesisConsole: open, type ..., a command)
     if (e.compare(0, 5, "call ") == 0) {   // call <path> <method> [numeric args...]
         std::istringstream ss(e.substr(5)); std::string path, method; ss >> path >> method;

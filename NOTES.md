@@ -1087,3 +1087,274 @@ Rebirth's "continue": leave a run from the pause screen and come back to it.
   (`basetimeSuspend` / `basetimeResume`: the clocks are not recorded as a finished run, and go on from where they
   were; the time in the menu doesn't count).
 - Tests: `eval continuum keys` (what would be saved), `dump <file>`, `state`, `dialog`; `ISAAC_CONT_LOG=1`.
+
+### Continuum: where the player comes back
+Not the centre of the room any more: in front of the door he last came in by - `_root.playerx / playery`, where the
+game put him when he walked in (the space just inside that door) - or, in a floor's first room while no other room
+of the floor has been visited (no other `beenlev` entry), the middle of the room (320, 280). If that tile is taken
+now (a pushed rock, an item dropped there...), the free tile nearest to it.
+
+## v1.6: Challenge Lab (`mod_challengelab.cpp`, engine `challengelab`)
+Up to 8 challenges of the player's own on a second page of the challenge list, made with
+`tools/challenge_lab_maker.html` (`mods/customchallenges.txt`, read each time the list opens). WotL and Eternal only.
+- The game's challenges (`_root.chala` 1-10, the same code in WotL and Eternal): golev gives `f1[chala]` items
+  (4 Dead Cat, 5 Mulligan + Infestation, 6 Dr. Fetus + Doctor's Remote, 7 Cube of Meat x4, 8 Mutant Spider + Spider
+  Bite, 9 Halo + Holy Grail) and no D6 (`chala != 0`); newstats gives luck -2 for 2; floor making forces darkness
+  for 1 and the labyrinth (`double`) for 3, has no treasure room for `chala >= 5` and none one time in three for 2;
+  Mom ends the run for 1-4 (`momdown == 50`); after Mom's Heart 9 gets only the trapdoor, 10 only the chest, and
+  `heaven` (the chest as the beam to the Cathedral) is only worked out for 0 and 10; the reward is `_root.lox[chala]`
+  at the last boss's death (1-8 Mom / Mom's Heart, 9-10 on floor 9). Every challenge is Isaac (`chal()` sets
+  `skiner = 0`). Names on the list: the sheet's own drawing (pauss frame 9, rows c1..c10; the numbers are part of the
+  sheet's shape). The longest are 20 characters ("Isaac Was Good Today", "The Doctors Revenge!"): the name limit.
+- A Lab run: `_root.chala = 11` (not one of the ten: no items, no D6, no reward, Mom's trapdoor open). `_root.darky`
+  is wrapped (a root function: `_root.a`'s functions are new with each room and the floor is made in the new room's
+  first script, before any tick could wrap them): darky(120) is the first thing floor making does, and there chala
+  becomes the number of the wanted floor rules (1 darkness, 3 labyrinth, 5 no treasure, 2 fewer, 0 usual); the tick
+  after, back to 11, and when one number can't do both (darkness / labyrinth with fewer / no treasure rooms) the
+  treasure rooms are taken out of the made floor: `boner` / `boner2` cleared and their `levz` entry (a "t0".."t5"
+  string) given a plain room's layout number, then `mapd()`. golev (the items, the D6) only runs on the room's first
+  enterFrame, a tick later: chala is 11 by then.
+- Items: given on the first playing tick as the game gives its challenges' (`gofind`, `highs`, `player.it`,
+  `powerlevel()`), again after a restart (R: newstart(true), `modsRunSerial`). Luck: -2 with bad_luck (undoing the
+  -2 that number 2 gives at newstats when fewer treasure rooms was the floor rule).
+- Character: the character select's ring (`men.men.cha`) writes `_root.skiner` every image from its own slot and its
+  clip starts over (`skiner = 0`) when the menu moves on: its slot (Isaac, Magdalene, Cain, Judas, Eve, ???, Samson;
+  ??? only with `locker[41]`) is set again every tick until the run starts. The Gone's selection is cleared.
+- Endings: Mom - when `momdown` reaches 50 in Mom's room, what the game does for challenges 1-4 (locker 4-6,
+  `colorit`, `levz = undefined`, `moveon`, frame 9). Mom's Heart's room (chaps 8, bossl): `heaven` true for Isaac /
+  The Chest (the chest is the beam), false otherwise (the chest ends the run); for Satan the chest is taken away
+  (`done`) and the trapdoor made if the game didn't (`create(320, 280, ..., 5.09)`: it only makes it after 10 wins);
+  for the others the trapdoor is taken away. The Chest: `trixx(47)` (the Polaroid) is true in the Cathedral's boss
+  room (wrapped). Finished: the goal floor's boss room cleared after it was seen closed (Mom: at the ending), kept
+  in `saves/challengelab_<game>.txt` (the challenge's name and rules as its key; not with GenesisConsole).
+- Locked like the game's: an ending past Mom needs `locker[4]` (the game ends the first run that beats Mom anyway),
+  and the character unlocked (Magdalene / Cain / Judas `locker[1..3]`, ??? 41, Eve 54, Samson 88).
+- Its state is `_root.clabRun` (a string): Continuum saves it with the run. It is cleared when the menu shows - only
+  if it exists: made on the menu's first tick it would have been one of the variables Continuum leaves alone.
+- Menu: the page is drawn in a clip of the sheet (`__clab`): the collection's arrow picture (the shape of
+  `men.men.col`'s "next page" button, which mirrors it), the names in the menus' hand-drawn letters (`synthHandText`),
+  the title and the unused numbers covered with paper-coloured rectangles; the game's rows are hidden (their buttons
+  too). Clicks: `g_modMouseHook` in `mouseEvent` (display.cpp), before the buttons. Controller: `menuSetExtras`,
+  now one list per mod (The Gone's collection cleared everyone's every tick).
+- Tests: `eval clab state | lab | std | start <n> | force <n>`.
+
+### Challenge Lab: second round
+- No locks: every challenge can be played from the start. What the game would need is made true for the run: Mom as
+  beaten (`locker[4]`, or the first run that beats her ends there) and, for ???, `locker[41]` (his place on the
+  ring) - in `ulocker` too, or the game shows "You unlocked" for them.
+- Runs apart: when one starts, `so.data` is deep-copied; while it runs `g_saveLocked` (nothing written to disk) and
+  a write guard on `_root.locker` / `ulocker` (no flag turns on: no unlock cards, achievements, secrets); when the
+  menu shows again the copy goes back into `so.data` and `_root`'s names for its arrays (`locker` lock, `lockor`,
+  `ulocker` ulock, `colss` cols, `bossk` boss, `lcomp`, `minwin` mwin). BaseTime records nothing for them
+  (`clabRunActive`); The Gone's unlocks are already kept out by `g_saveLocked`.
+- `_root`'s write guard (`g_writeGuard`, chained with GenesisConsole's: Lab's is installed over it and calls it) holds
+  the curses while a floor is made: from `darky(120)` to the end of that tick, writes of `darks`, `double`
+  (labyrinth, floors before the Womb 2) and `big` (Curse of the Lost: four more rooms) are made true, so any of
+  them can go together; `chala` at that moment is only the treasure rule (2 fewer, 5 none, 0 usual). `wtfuuz` (the
+  game's "starting items given") is held true then too: with chala 0 or 5 the room's first golev would give the D6
+  or challenge 5's items.
+- Characters: `character = thegone` is Isaac for the game and The Gone for his mod (`clabCharacter()` in
+  `thegoneTick`'s run start); without the mod, Isaac.
+- Trinket: `_root.trix = 28 + n` and `trixer` = its name (what picking one up does; the HUD reads them).
+- Base stats (advanced; all worked out again by the game all the time, so applied after it): damage `dmgdo` x,
+  tears `firr` (the player's `fire` from shots per second + n), range and shot speed in `create` for the player's
+  tears (as GenesisConsole's overrides, which win), speed after `playc` (`_root.playsp` + n), luck once at the start.
+  Heart containers: the game recomputes `player.mhp` every image from the character's own (3,4,2,1,3,2,1) and the
+  items', so the difference goes into `ups[22]` (Lunch) and they are filled a few ticks later. Soul hearts
+  (`armor`), coins, bombs, keys once at the start.
+- GenesisConsole's wrappers of `dmgdo`, `firr`, `create`, `playerhurt` are now `GameHook`s (mod_hook.h): with its own
+  wrapping, the two mods would have wrapped each other's wrappers forever. Once on in a room, a wrapper stays until
+  the room changes (it lets everything through while its override is off).
+- Finished: `complete = 1` written into that challenge's section of `customchallenges.txt` (the n-th `[challenge]`, if
+  its name still matches), not while GenesisConsole is on. (The earlier `saves/challengelab_<game>.txt` is gone.)
+
+### Challenge Lab: third round
+- Clicks through the sheet: with a menu sheet open (`_root.pauss` visible, `cur > 1`, menu frame 5) the main menu's
+  buttons stayed under it in the display list and took clicks outside the sheet's own. `buttonAt` (display.cpp,
+  `behindMenuSheet`) now skips every button that is not inside the sheet while it is open.
+- Controller: the extras given by `menuSetExtras` are candidates whose `show` is the extra itself, so the renderer
+  draws them in the pink ink mode like the game's options. (Headless shots need `ISAAC_MENUUI=1` to show it.)
+- The page arrow sits right of Back, inside the sheet: Back is moved 30 units left once per sheet instance and the
+  arrow (0.85 scale, mirrored on the Lab page) is centred on Back's hit bounds.
+- Save limbo: while a run apart starts, every `locker` / `ulocker` flag 1..len-1 is set (after the deep copy), so
+  the pools hold every item and no unlock card can show; `colss` writes are kept in the copy only. The copy has to go
+  back before the menu art (clip 5834) is built, because it reads the lockers in its first frame: `_root` gets an own
+  `gotoAndStop` (DONTENUM) that, for "menu" / 5 during a run apart, restores the save first and then calls the
+  MovieClip one. Without it the title showed Isaac beating Mom after a Lab run.
+- Lettering: the Lab's title and names use The Gone's card lettering kit (`cardTextShape` & co. in mod_thegone.cpp,
+  built from `_root.men.men.cha.inc`), the letters of the character select. Capitals at 29 units, small letters at
+  0.74; anything the cards lack falls back to `synthHandText`. The game's row letters can't be reused: they are
+  joined strokes, not separate glyphs.
+
+### v1.6: the last round (Challenge Lab, Continuum, Good Saac, The Gone, GenesisConsole)
+- Continuum resumes only after the main menu's own Start: a click on one of `_root.men.men`'s buttons
+  (`g_buttonReleaseHook`) or Enter / Space / Right (`g_startKeyTick`, display.cpp; the menu's onEnterFrame turns
+  Right into `pos = 3` and the Enter / Space key handler does the same) in the 3 ticks before `pos` goes -1 -> 3.
+  A Challenges press that resumed the saved run could not be reproduced headless; the gate keeps any other way to
+  `pos 3` from resuming.
+- Continuum and the run's character: `skiner` is saved now (it was one of the menu's own keys, `s_sysKeys`), and
+  until the menu has faded out the ring (`men.men.cha.skiner`, mapped as the ring orders them) and `_root.skiner`
+  are held at it every tick: the game takes the character from the ring as the run starts, and a Challenge Lab run's
+  ring shows Isaac (Samson came back with Isaac's 3 containers + his ups[22] difference = 4). Challenge Lab also holds
+  its character every tick on the menu while a run is on (a resumed one too).
+- Challenge Lab and a resumed run: the resume's start goes through `newstart` too (`modsRunSerial` changes), which
+  read as an R restart and gave the items, hearts (`ups[22]` again) and pickups once more. `continuumResumes()`
+  counts resumes; the first restart after one is not a restart.
+- Challenge Lab: only the challenge's items. `newstats` sets `_root.classit` and the first `golev` gives the
+  character's own item (Magdalene 45 Yum Heart, Cain 46, Judas 34, ??? 36, Eve 117 + 122, Samson 157); the write
+  guard holds `classit` false while the floor is made, as it holds `wtfuuz` (Isaac's D6) true. The Gone's mod gives
+  Spirit of the Night itself. Items 230-232 (The Gone's) are given only with his mod on; in a Lab run his items are
+  in the pools (`unlocked()` true) and picking one up doesn't add it to his collection.
+- Curse of the Blind (`curse = blind`): the player still aims (the familiars shoot where he does), but his own tears
+  never leave: `plff` (the player's shot) and `create` are wrapped, and a tear made inside `plff` (7th argument 2)
+  is made `done` and hidden as it is made. The familiars' tears are made with the same type 2 from `friends` (`ba` is
+  set on the familiar, not on its tear), so the first version, by type alone, killed some of theirs as well (short,
+  jumping shots); and the one before it hid the arrow keys from `Key.isDown` (no aiming at all). Checked tick by tick
+  with Brother Bobby: his shots are the same with and without the curse. Then: `plff` also makes some familiars' tears itself (Brother
+  Bobby among them), and with several of them none shot. Now a tear made in `plff` (not inside `friends`) is the
+  player's only when it starts on him (within 10 px; his eyes give 3-8, the nearest familiar 25 or more), and it is
+  hidden at once and made `done` at the end of the image (the familiars shoot off his shot). The game shows three
+  familiars at most (as in the game without the mod), so "Babysitter" now has three.
+- Challenge Lab's speed did nothing: playc works `_root.playsp` out and moves the player with it in the same call,
+  so a value written after it came too late. The root's write guard is on during playc, and its first write of
+  `playsp` in each call gets the challenge's difference (the later writes add to it). Measured: 0.5 / 1 / 1.8 walk
+  96 / 129 / 206 px in 20 ticks. Tears, damage, range and shot speed did work (measured too); range and shot speed
+  now only touch the player's own tears (made in plff), not the familiars'. Soul hearts are set again a few ticks
+  after the start: ??? gets his own after it, and they went on top.
+- Challenge Lab's own challenges: `mods/customchallenges.txt` (eight, from fun to very hard) is built in
+  (`clab_bundle.inc`, made by CMake like the .mod files) and written into a mods folder that has no list, once:
+  `saves/challengelab_bundle.txt` marks it, so a list deleted later stays deleted. A player's own list is never
+  touched. It is not in the release's mods folder: unpacked over an older one, it would replace a player's list.
+- Challenge Lab and The Gone's Black Mirror: the items are given before The Gone's tick has wrapped the run's
+  `powerlevel` (it does so in `effectsTick`), so the mirror stayed a passive in `ups` and was never held.
+  `goneHookItems(a)` wraps it first. Checked: every item 1-198, 230 and 232 ends up in `ups`.
+  Its HUD picture comes from the items' sprite, which The Gone's mod learned only from an item seen in a run (a
+  pedestal): held from the start, the slot stayed empty until it was used. It is learned on the menu now, from the
+  collection's large picture (`men.men.itt`: 3354 in Eternal, 3304 in WotL), and the HUD's clip is sent to the
+  mirror's number if the game hasn't yet.
+- Controller on the challenge list (`_root.pauss` frame 9): left / right go straight to Back (`isBackButton`), or to
+  the place `g_challengeNavHook` names (Challenge Lab: right -> its arrow on the game's page, left -> its arrow on its
+  own page).
+- challenge_lab_maker.html: "Bring in a challenge" is gone (and the game's ten with it); The Gone's three items are
+  in the item list; the Curse of the Blind checkbox.
+- GenesisConsole's unlock and the secrets screen: the screen shows `_root.unl2.d` at frame `lockor[ax]`; that clip
+  has 64 frames in the original, 107 in WotL (99-107 empty) and 113 in Eternal, and past its last frame it stays on
+  the last one (Eternal Life again and again in Eternal). Now only 1-64 / 1-98 / 1-113, the new ones in order from 1
+  before the ones already found (the screen starts at the list's first). 15-17 (Yum Heart, Lucky Foot, Book of
+  Belial) have pictures in all three, so they stay.
+- GenesisConsole's unlock and The Gone: his items show in the collection for the session (`collSession`, next to the
+  saved `coll`); his unlocks were already session-wide (`session`), so they are in their pools.
+- Good Saac `select_click`: Eternal already plays the ring's sound for the keys (it sounded twice); WotL only now.
+  The original plays it too (its ring isn't `men.men.cha`, so the fix never ran there). `ISAAC_SOUNDLOG=1` logs every
+  sound started (tick, character id).
+- Good Saac `start_spot`: `_root.playerx` / `playery` (and `door`) are where the player came into the room; set at
+  each door, never cleared, so a new run began in the last run's doorway. Cleared whenever the main menu shows
+  (undefined: the game's own start, 320, 400). Continuum sets them for a resumed run after that.
+- The Gone, The Void Shard: a shot's hit calls `playerhurt(dmg, <the shooter's type>)` (not 4: the check never
+  matched, and a miss was asked again every image the shot still touched him, so it hit a moment later). Now: a hit
+  with an enemy shot (`s` 9) within 30 px is a shot; one in four misses, and those shots are remembered (two seconds
+  at most) and miss until they have gone through.
+- The Gone, Black Mirror (third version). The second one mirrored each image the turned enemies' step towards the
+  player (position and speed): jumpers and chargers moved far too much. Now every enemy keeps its own behaviour and
+  only its target changes, per enemy: `aistuff` (one pass over everything in the room) is wrapped, and so is
+  `deathscripts`, the first thing it calls for each thing (`a.trg`); there `a.player` is set to that enemy's target
+  for the rest of its turn, and put back after the pass. Half the enemies (at least one) are turned round: their
+  target is a copy of the player's variables at his mirror image through them; the others go for the nearest other
+  enemy (a new one every two seconds; alone, it is turned round). The walkers don't aim at `player` but at
+  `a.playx` / `playy`, which playc updates only while the player stands on a free tile (flying over a rock it stays
+  put: the first version's enemies, which went for other enemies through `player` alone, stopped there); they are
+  set per enemy too, on the free tile nearest the target. The game's own hits only know the player, so a fighter's
+  touch hurts the one it goes for (3.5, twice a second) and enemy shots hurt the enemies they hit; `playerhurt`
+  called during a turn with another target is no hit.
+
+## v1.6: GenesisConsole's "unlock", everything
+It set `locker` / `ulocker` 1-99 only. Now: all of `locker` (100 in OG / WotL, 200 in Eternal), every index in
+`lockor` ("View found secrets"), the collection (`colss` 1-132 / 1-198), each character's endings (`minwin`), and
+in `so.data` wins >= 10 (the endings picture is `min(11, wins + 1)` + Mom; the Cathedral) and icer >= 1 (Sheol
+done: challenges 9-10 open, an ending). WotL then shows 99/97 secrets: indices 15-17 and 99 are never used by the
+game, but "everything" is everything. Session only, as before.
+
+## v1.6: familiars (Good Saac `familiar_shots`, `familiars`) and Challenge Lab's hard mode
+- The familiars' shots: `plff` makes the player's tear and each familiar's in turn, all along `_root.a.xenf` /
+  `yenf` (the aim, a unit vector). Robo-Baby's `lasershow`, called from there, overwrites them with the vector to its
+  target (not normalised), so the familiars after it (Harlequin Baby's two shots, Sister Maggy...) went that way at
+  "speed" = the distance: far too fast, from the wrong side, or off screen at once. Flash behaviour (the three games'
+  `lasershow` write `xenf`). `familiar_shots`: `plff` and `lasershow` are wrapped; inside `plff`, `lasershow` puts
+  `xenf` / `yenf` back as it found them. Harlequin's tear speeds went from (108,-32) / (182,-18) to about (-10,+-2).
+- `familiars`: `onEnterFrame` makes babies (`create(x, y, 0,0,0,0, 3)`, `minions` + 1) while `minions <
+  Math.min(3, sum of the baby items)` (2 in the original), and `friends` gives each its kind `baa` every image from
+  `a.ups` (not `_root.ups`: with that every baby was Abel), skipping the last two kinds given (`lastbb`, `lastbbb`).
+  Kinds by item: 8->0, 67->1, 95->2, 99->3, 100->4, 113->5, 163->6, 167->7, 174->8, 188->9. With more baby items
+  than the cap, the mod makes the missing babies the same way (only while `player.d._currentframe < 3`), keeps a
+  baby -> kind map, and wraps `friends`: for a mapped baby, `a.ups` of the ten baby items is set to 1 for its own
+  item only (0 for the rest) and `lastbb` / `lastbbb` to -1 around the original, then put back. Under the cap the
+  map is cleared and nothing changes. A `GameHook` on `dirkey` must not be added: patches.cpp already wraps it
+  (`dirkeyWrap`) and the two recursed forever.
+- Challenge Lab `hard_mode = 1` (Eternal only): `_root.hardmode` (read by the game from `so.data.hard`) is set after
+  `beginApart`; `endApart` puts back the save's `so.data.hard`. The HUD mark (`hud.hardon`) follows it.
+- Build environment notes: Windows used SDL2 2.30.9 (mingw devel package). The Switch toolchain was built from source
+  (binutils 2.46, gcc 16.1.0, newlib 4.6.0, devkitPro buildscripts' patches, libnx, mesa switch-20.1.0-rc3, SDL
+  2.28.5 with pacman-packages' patch) when the devkitPro hosts couldn't be reached.
+
+## v1.6: Marksman (`mod_marksman.cpp`, engine `marksman`) and Challenge Lab's hand cursor
+- The game keeps no endings by character (its `eheart` / `eisaac`... atoms are the endings' sound names, not save
+  flags), so the marks are the mod's own: `saves/marksman_<game>.txt`, `<character> = mom:N moms_heart:N isaac:N
+  satan:N the_chest:N` (0 / 1 / 2 hard mode), characters as `_root.skiner` (0-6) and 7 The Gone (`goneRunActive`).
+- An ending counts (normal runs only: `chala == 0`, no Challenge Lab run, no GenesisConsole) when the floor's boss
+  room (`lev == bossl`) is cleared (`shutdoor` and `ashut` 0) after it was seen shut, or for Mom when `momdown > 0`
+  there, or when `_root` goes to an ending frame (9-40, as BaseTime). Floor -> ending by `_root.chaps` (and
+  `altchap`): 6 Mom, 8 Mom's Heart / It Lives, 9 Isaac (altchap) / Satan, 11 ??? (the original: 6 and 8 only). Hard
+  mode: Eternal's `_root.hardmode`. The first Mom kill of a save ends the run (frames 9 -> 20 -> the menu): counted.
+  `momdown` is negative in Mom's Heart's room (not used there). GenesisConsole's `kill` doesn't finish Satan (phases).
+- The note: the board `_root.men.men` (shown when `pos == 3`, the character select) has the "Select!" note as two
+  copies of the game's paper clip (815 Eternal / 504 the original: a shadow at alpha 0.2 and the paper), found by
+  their stage bounds (centre 1138.5, 928; 453 x 441), and its pin (two clips at 1112, 799). They are copied (char id,
+  matrix, colour transform) into `__marksman`, turned and made smaller (Eternal 0.5 at -5 degrees, centred 4 / -266
+  stage px from Select!'s centre; the others 0.6 where Eternal's hard mode note is). The board is drawn 2.25 times
+  larger than the stage: the marks clip is scaled by its inverse so the marks are laid out in stage px. Depth: Eternal
+  570+ (over the hard mode note's papers 161 / 164 - same colour: the copy's paper is whitened with the colour
+  transform's add so its edge shows -, under its writing 654 / 655 and Select!'s 554... the board's own); the others
+  200 (under the character sheet `cha`, 528). `createEmptyMovieClip` adds `DEPTH_BIAS`: subtract it for a timeline
+  depth. The character shown: `_root.skiner` (the ring writes it every image), or The Gone (`goneSelected`).
+- Symbols: shapes made of marker strokes (round ends, a little jitter) in unit coordinates: a footprint (sole + 5
+  toes), a heart, a cross, the cross upside down, a question mark. Not reached: the notes' ink at alpha 0x48; reached:
+  the ink (0xff878484) with a light fill; hard mode: red (0xffb2392d).
+- Challenge goal in the HUD: `_root.hud.__marksman` at (186, 40) (right of the map); with Hyper Zoom at (24, 136): the
+  view starts at the room (y 77.5), anything above it isn't seen. Goals: Challenge Lab's (`clabGoal`), the game's 1-4
+  Mom, 5-8 Mom's Heart, 9 Satan (only the trapdoor after Mom's Heart), 10 Isaac (only the chest: the beam).
+- Challenge Lab: the hand cursor (`menuui.cpp` `g_hand`) also asks `g_modHandHook` (display.cpp), set by the lab to its
+  own hit test (the arrows, the rows).
+- Good Saac `familiars`: a baby is a follower (`s == 3`, `baa` a number) with none of the marks the other followers get
+  when made (`mon` - The Relic is `mon` 3 -, `cat`, `meat`, `ang`, `fly`, `bum`, `eye`, `hairb`, `hol`, `ni`, `bird`,
+  `ggho`, `dad`, `maga`, `bluf`). The Relic was taken for a baby: one baby fewer was made and the kinds moved (Brother
+  Bobby gone after the next room).
+- Later: the Select! note is found by its centre in the board's own coordinates (1183.5, 839.8 in the three games),
+  not on the stage: the board slides between sheets and the note used to be built only after the first move.
+  `seen = ...` in marksman_<game>.txt: an ending's mark is drawn only once its last boss's room has been entered in
+  some run (any run but GenesisConsole's), or a character has it, or (Mom) `_root.locker[4]`. The HUD goal moved to
+  (24, 136) in every view (the room's top left wall, under the trinket): next to the map, a wide map covered it.
+- Packages: `mods/` (every .mod and customchallenges.txt) and an empty `saves/` ship next to the program
+  (Switch: switch/isaac/). With no mods.txt the program writes it from them on the first start.
+
+## v1.6: issues #38, #39 (and #33)
+- #38 Ending 5 (root frame 14, sprite 7727): its music is a stream with no blocks on frames 402-415 (the Flash IDE
+  leaves silent frames out). The channel plays all the blocks joined, so during the gap it ran 14 frames (~0.48 s)
+  ahead and at frame 416 `streamSync` pulled it back (seek 608580 -> 587520): heard as the music cutting out and
+  starting again. Flash plays nothing on frames without a block: `handleStream` now pauses the stream channel (the
+  mixer skips a paused channel, `Chan::paused`) on a frame without a block before the stream's last block, and lets
+  it go on at the next block. To reach it: Mom's Heart, touch the chest (root frame 10 at the touch), then
+  `eval call _root gotoAndStop 14` on the same tick (`gotoAndPlay` lets ending 1's logic move the root on).
+- #39 The Gone's one free deal per devil room was keyed by `_root.lev` only and never reset: devil rooms have the
+  same index, so after a deal in one run every later devil room (same session) kept its deals locked (they are
+  pushed like shop items when not paid). Now keyed by lev + 1000 * chaps and reset when a run starts.
+- #33 (Loki's Horns + Technology + Mom's Knife flipping left / right, Judas with Abel, Eternal): not reproduced
+  (Basement and The Chest, holding and throwing both ways): the knife always went the pressed way.
+- Marksman's HUD goal, final place: (16, 50) in the HUD band (under BaseTime's two times, left of the map); with
+  Hyper Zoom (24, 90), the view's top left corner (the view starts at y 77.5; StatOn's column starts below it).
+- StatOn: tears and range used to change with the next tear only (the game works `_root.firra` / `firrr` out when it
+  fires). Tears: `firr(o)` (the three games) writes the delay into `o.fire` and copies it to `firra` only when `o` is
+  the player: called on an object of our own (the variable `f1` it sets put back). Range: create() works firrr out
+  as `-5 dm - dy` with dy / dm moved by the items: 5 * (u12 - u71 + u30 + u31 + u29) + 5.5 * R, R = 0.5 * (u12 + u30
+  + u31 + u29 + 3 u71 + u101 + u110 + u121, + 1.5 u182 + u197 not in the original, + u14 + u189 Eternal), and the
+  character: u6 ? -13 : Cain -6 : Samson -5 (not the original); the rest is each tear's random fall. Shown: the last
+  tear's firrr + (that sum now - that sum at the last tear). Runs identical with StatOn on / off (eval diff).
