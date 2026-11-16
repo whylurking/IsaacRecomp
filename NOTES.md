@@ -1358,3 +1358,132 @@ game, but "everything" is everything. Session only, as before.
   + u31 + u29 + 3 u71 + u101 + u110 + u121, + 1.5 u182 + u197 not in the original, + u14 + u189 Eternal), and the
   character: u6 ? -13 : Cain -6 : Samson -5 (not the original); the rest is each tear's random fall. Shown: the last
   tear's firrr + (that sum now - that sum at the last tear). Runs identical with StatOn on / off (eval diff).
+
+## v1.6: Curse of the Blind, everything; Android's held stick at a run's start
+- Challenge Lab's Curse of the Blind used to stop only type 2 tears made within 10 px of the player in plff: Inner
+  Eye's side ones are made at exactly 10 px. Now (wCreate, wLasershow, the tick): anything made in plff (not inside
+  friends) within 18 px of him, of any type (Epic Fetus' target is 37; Dr. Fetus' bombs, Ipecac... are tears), Mom's
+  Knife (one object with `knife`, made when taken, outside plff: made `done` and hidden every image), his own lasers
+  (`lasershow(player)`: Technology from plff, Brimstone from playc - skipped, and `brim` set back), and Brimstone's
+  beam, drawn by the head itself (`player.d.d.d.d.z`, frame 6 of the head while it fires: hidden every image).
+  Familiars (25 px or more away, or inside friends; Robo-Baby's `lasershow(baby)`) still shoot.
+- Android (touch.cpp): a finger put down outside play is the menu's mouse (button down). When play started with it
+  still down, `menuId_` was forgotten without letting the button go and the finger was no joystick: no shooting
+  (and the mouse held) until a pause reset everything. Fingers down outside play are now kept (`pend_`: where each
+  landed, where it is); when play starts the mouse button is let go and each becomes its side's joystick (base where
+  it landed). Reproduced with ISAAC_TOUCH_INJECT (tap Select!, a second finger down on the right while the run
+  loads): before, no key 39 and mouse never up; now mouse up and key 39 at the first gameplay tick.
+
+## v1.7: a pass of fixes (found by review with sanitizers and a harness, not from reports)
+Found by reading the runtime and by driving it without game data: an ASan/UBSan build, a harness that calls the
+natives directly (BitmapData, Array, String, Number, SharedObject, Matrix... with random arguments) and the threaded
+loop under xvfb with a stand-in SWF of the right length. None of it was run with the real games (no game data on
+that machine) or built for Windows / Switch / Android / PSP: those builds and a real play-through are still owed.
+- `render.cpp`, the stage background quad: the three assignments of the colour sat on the same line *after* a `//`
+  comment, so they were part of the comment and the quad was always drawn with the default `CX` (white).
+  `Snapshot::bgColor` (the SWF's SetBackgroundColor) was never shown. Now on their own line. Checked with a SWF whose
+  background is #202020: (255,255,255) before, (32,32,32) after. Worth a look with the real games on the first play:
+  wherever the stage showed through it was white before and is the SWF's colour now.
+- `builtins.cpp`, SharedObject loading (`deser`): nothing was checked. `find()` returning npos went straight into
+  `substr` / the index (a cut file: `std::out_of_range`, uncaught, so the program closed on start), a count was
+  trusted (`a99999999:` allocated until the process died) and a file cut in the middle of an object gave an object
+  with the keys read so far, which the next `flush` wrote over the file. Now every read is bounded (a count can't be
+  larger than the bytes left: each element takes at least one), any error sets `bad` and the whole file is refused.
+  `so_getLocal` then: (1) copies a refused file to `<save>.corrupt` (never overwritten silently), (2) loads
+  `<save>.tmp` if that one is whole (it is the newest good copy: see the next point), (3) otherwise starts empty. A
+  missing save with a whole `.tmp` is loaded from it too. A whole save always wins over a `.tmp`.
+- `platformReplaceFile` on Switch / PSP did `remove(to)` then `rename(from, to)`: between the two there is no save,
+  only the `.tmp`, and before this version nothing looked for it. It now tries the plain rename first (in case the
+  driver replaces) and the loader's `.tmp` recovery covers the window that is left.
+- Numbers in the save: `%.17g` prints Infinity / NaN as `inf` / `nan` / `-nan` with glibc, bionic and newlib but as
+  `1.#INF` / `-1.#IND` (msvcrt) or `nan(ind)` (UCRT) when a Windows build ends up on the system's printf instead of
+  MinGW's own (not checked which one the released .exe uses), and `strtod` reads back only its own runtime's
+  spelling (`1.#INF` reads as 1). `ser` now writes `inf` / `-inf` / `nan` itself and `deser` accepts every spelling
+  (and save_converter.html's `Infinity` / `NaN`).
+- `bd_fillRect`: the clipped rectangle wasn't checked for being empty; with x1 < x0 (rectangle wholly to the right
+  of the bitmap, or a negative width) `std::fill(row + x0, row + x1, c)` ran with begin > end and wrote past the row
+  (ASan: heap-buffer-overflow). Returns early now. The games' own calls are always inside.
+- `num_toString(radix)`: `(int64_t)n` with n = NaN / Infinity / beyond int64 is undefined (and `-v` overflowed for
+  INT64_MIN); those go through the decimal path now.
+- Touch (`main.cpp`, the TouchControls key callback): touch.cpp presses fixed codes (WASD, arrows, E, Space, Q, P)
+  and they went to the game as they were, so the game's "Lefty Flip" and "Azerty" options reinterpreted them (lefty:
+  the sticks swapped roles; frog: left stick left = `A` = the card key, up = `W` = nothing). Each code is now turned
+  into its action and sent as `gameCode(action, frog, lefty)`; the key sent on the press is remembered per touch
+  code so the release lets go of the same one if the option changed in between. With both options off the mapping
+  is the identity (nothing changes for most players). Not testable here (the stand-in SWF never reaches gameplay):
+  only the mapping table was checked for the four combinations. A controller that was never rebound still sends
+  the original keys on purpose ("devices that were never customized keep the original behaviour", controls.h), so
+  Azerty still breaks it; left as it is.
+- Audio with no device (`audio.cpp`): `mix()` only ran as SDL's callback, so with `g_dev == 0` (open failed at start,
+  or `audioDeviceTick` closed a lost device and couldn't open another) no channel ever advanced: `allocChan` ran out
+  of channels, positions stood still, `onSoundComplete` never fired. `audioDeviceTick` now mixes against the clock
+  into a scratch buffer while there is no device (at most 0.25 s of catch-up per call), and `audioDevicesChanged`
+  (SDL_AUDIODEVICEADDED) schedules a quiet reopen. Tried with `SDL_AUDIODRIVER=alsa` on a machine with no sound
+  card (ASan, threaded loop): clean; the reopen path itself was not exercised.
+- `snapQ` (logic -> render) had no bound: while the main thread doesn't take snapshots (Windows runs a modal loop
+  while a window is dragged / resized; any blocking system dialog) the logic thread kept pushing 30 a second, each
+  holding its display list. At 90 queued (3 s) the logic thread now waits and re-bases its clock, exactly as
+  `logicPaused` does.
+- `tools/save_converter.html`: the Flash writer expected every array to have gone through `flashArray` (`entries`),
+  which only happens for the save's top-level arrays; an array inside an object or two levels down threw
+  ("Cannot read properties of undefined"). Built on the spot now. The ISAACSO1 reader maps the inf / nan spellings
+  above (`Number("inf")` is NaN) and reports a cut file instead of reading past the end.
+- Phase lock (`main.cpp`, logic loop), the estimate of how long a tick takes to publish: it was
+  `pubEst = max(pubDelay, pubEst - 0.00002)`, the worst ever seen, forgotten at 0.02 ms per tick = 0.6 ms/s. A room
+  being built (100-300 ms on the Switch, tens of ms on PC) therefore left it wrong for minutes, and as only
+  `pubEst mod P` matters the lock's target slid through the whole frame period every ~28 s: the lock locked onto a
+  moving, meaningless phase. A model of the same arithmetic (tick 9 +-3 ms, a 180 ms room every ~25 s,
+  60 Hz): the wait between a tick's publication and the next frame start was uniform over 0..16.7 ms (mean 8.3,
+  p90 15) - what no lock at all gives - against 1.5 ms asked for. Now: the highest `pubDelay` of the last 90 ticks
+  leaving out one in thirty (so the three slow ticks of a room change don't count, a heavy phase does). Same model:
+  mean 4.3 ms, p90 6.7 (what is left is the ticks' own jitter: the lock aims at the slowest ordinary tick); with
+  PC-like ticks (1.5 +-0.5 ms) 2.0 ms. Only the tick clock's phase moves, at most 0.4 ms per tick as before: the
+  game's state and the headless runs are not touched. performance.txt has a new figure for it, TICK WAIT (mean ms
+  from a tick's publication to the start of the frame that adopts it). **Not measured on a console or with vsync at
+  all** (the test machine has no vsync, so the lock is off there): to check on the Switch with L3 + R3, TICK WAIT
+  should stay within a few ms and steady instead of wandering between 0 and 16. (Without vsync the figure also
+  holds the display margin, as a tick is adopted only once `time <= present - delta`: ~12 ms at 66 fps here. HELD
+  says nothing either way on the Switch: with max_margin = 6 every second frame runs past the tick on purpose.)
+  Other latency left on the table, on purpose: interpolation between ticks (one frame at 60 Hz; `interp_lead`
+  trades it for overshoot), the one frame queued on the Switch's GPU (waiting for the last fence instead of the one
+  before would drop to 30 fps whenever a frame runs long), and starting each frame later in the refresh ("late
+  latch": needs a reliable bound on the render time, which new rooms don't give).
+- Looked at and left alone: `rollOut` vs `dragOut` in `mouseEvent` (not compared with Ruffle yet), narrow-path file
+  APIs on Windows before 1903, The Gone's art ids, and the harness finding that `a[4294967295] = x` on an Array
+  resizes the dense storage to that index (the games never index that far).
+- (review of the v1.7 pass) Checked with the three games' data: headless runs of the same script with 1.6.0 and 1.7.0
+  (three games, mods off and on): identical. The real Eternal save loads to the same data; cut in half, 1.6.0 loaded
+  half of it and wrote that back (776 -> 722 bytes), 1.7.0 keeps it as .corrupt and starts empty, or takes the whole
+  .tmp when there is one. Touch (ISAAC_TOUCH_INJECT, real loop): with so.data.left the movement stick sent 68 (shoot)
+  and the shooting one 39 (walk) in 1.6.0, now 39 / 68; with so.data.frog left was 65 (card), now 81. No device
+  (SDL_AUDIODRIVER=alsa, no card, the real loop with play for ~70 s): 1.6.0 had to cut the oldest sound 168 times
+  for want of a free channel (none ever ended), 1.7.0 none. The games' background is #cccccc: only the odd edge
+  pixel changes (by 1). The phase lock was not measurable here (no vsync).
+- SDL's audio is started on its own (`SDL_InitSubSystem` after `SDL_Init`): a system with no audio back end
+  (`SDL_AUDIODRIVER` unknown, no PulseAudio server) made SDL_Init fail and the program close. It now goes on with no
+  device (the mixer runs on the clock); a device can't come back in that case (SDL's audio never started).
+  `ISAAC_SOUNDLOG` also logs when a sound has to cut the oldest one for want of a free channel.
+- PSP: frozen at 1.6.0 (the owner's decision). `build-psp` is no longer built or tested; its code is left as it is.
+
+## v1.7: issues #42, #46, #47, #49 (and #45); The Gone 1.5
+- #47 (black line, windowed, WotL / Eternal only): the HUD keeps two empty bars, `hud.black` and `hud.black2`, at
+  `_xscale` 0.1 (0.1 px wide). Drawn as a textured quad, a quad that thin is solid wherever it covers a pixel
+  centre: at 960x720 (scale 1.5) `black` at x 43.6 covers the centre of column 65. `compileNode` now skips content
+  thinner than 0.34 device px (and anything with a degenerate matrix); checked pixel by pixel: at 960x720 only that
+  line changes, nothing at 1386x1040 / 1920x1080, nothing in the original game.
+- #49 (StatOn, show_deals = 0): `removeClip` left `Row::shown` false while `build` makes every row visible, so a row
+  turned off was never hidden again after the HUD was rebuilt (boss room, new floor). `removeClip` resets it.
+- #42 (Curse of the Blind, Bob's Rotten Head): the thrown head is a tear made in `plff` (`bomb` true, set after
+  `create` returns) while `_root.bombnext` is set (the game clears it right after). `wCreate` doesn't treat what
+  is made then as the player's tears.
+- #46 (Android, custom storage): `IsaacActivity.rootDir()`: the folder on the first line of
+  `IsaacRecomp/datadir.txt` (internal storage), else an `IsaacRecomp` folder at the root of another volume
+  (`getExternalFilesDirs`: `<volume>/Android/...`), else the internal one. Writable folders only.
+- #45 (flicker of the head with BaseTime + StatOn + PillLog (+ Itemnomicon), original game): not reproduced (the
+  reporter couldn't either); every frame of a run with the four mods, shooting in turns, looked normal.
+- The Gone 1.5: Nothing's condition is now only `_root.cols` growing (passive items); an active item (`_root.it`)
+  is fine, as were trinkets, cards, pills and bombs (never in `cols`: checked in the three games). Option `buffed`:
+  `dmgdo` x1.2 (`GameHook g_wDmgdoB`, not with GenesisConsole's damage), `_root.pilc = 120` at the run's start once
+  Negative Isaac is unlocked (the HUD shows it and Q uses it, as one picked up), and when a boss room (`bossl`, or
+  `bossl2` on an XL floor) is clear after it was seen shut (or Mom down), `create(250, 280, ..., 5.35)`: the game's
+  own random trinket (5.3, a random card, in the original game, where 5.35 makes nothing). Not in Challenge Lab runs.

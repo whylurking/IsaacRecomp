@@ -4,7 +4,7 @@
 // any kind. Runs as The Gone unlock four more things, each shown with its own "You unlocked" card (the game's
 // secret-card animation, _root.unl) and listed with the game's found secrets (menu, _root.lockor while the menus show):
 //   Mom's Heart          -> Negative Isaac (a card): a 15-second shield, as Book of Shadows (the game's playsave)
-//   Mom's Heart, with no item but the starting one -> Nothing (treasure rooms): non-boss enemies may vanish (10%)
+//   Mom's Heart, with no passive item but the starting ones (actives, trinkets, cards, pills allowed) -> Nothing (treasure rooms): non-boss enemies may vanish (10%)
 //   Isaac (Cathedral)    -> The Void Shard (devil rooms): enemy shots go through you 25%; when hurt, 5%: 50
 //                           damage to the room
 //   Satan (Sheol)        -> Black Mirror (treasure rooms, active, 3 charges): the room in negative, half the
@@ -455,7 +455,7 @@ Value callIn(Act& ac, const Value& obj, const char* fn, std::initializer_list<Va
 
 // ---- the run (any character): floors cleared without a hit or a heart, for The Gone himself
 struct Track { uint32_t serial = 0xffffffffu; double chaps = 0; bool clean = true; int streak = 0; bool ended = false;
-               int baseCols = -1; double baseIt = 0; bool extraItem = false; bool burst = false; };
+               int baseCols = -1; bool extraItem = false; bool burst = false; };
 Track g_t;
 void floorDone(const char* why) {
     if (g_t.clean) g_t.streak++; else g_t.streak = 0;
@@ -803,13 +803,17 @@ void trackTick(const Value& a, bool inGame, bool play, int rootFrame, bool goneR
     double chaps = num(V(R, "chaps"));
     if (g_t.chaps == 0) g_t.chaps = chaps;
     else if (chaps > g_t.chaps) { g_t.chaps = chaps; floorDone("next floor"); }
-    // items besides the starting one (The Gone's runs: Nothing needs none)
+    // passive items besides the starting one (The Gone's runs: Nothing needs none)
     Value cols = V(R, "cols");
     int n = cols.isObj() && cols.o->kind == OK_ARRAY ? (int)((Array*)cols.o)->el.size() : 0;
-    double it = num(V(R, "it"));
+    // (only passive items count: _root.cols grows with each one. Active items, trinkets, cards, pills and bombs are
+    //  allowed - an active item changes _root.it, not _root.cols)
     if (play) {
-        if (g_t.baseCols < 0) { g_t.baseCols = n; g_t.baseIt = it; }
-        else if (n > g_t.baseCols || it != g_t.baseIt) g_t.extraItem = true;
+        if (g_t.baseCols < 0) g_t.baseCols = n;
+        else if (n > g_t.baseCols && !g_t.extraItem) {
+            g_t.extraItem = true;
+            if (getenv("ISAAC_GONELOG")) logf("thegone: a passive item picked up: no Nothing this run\n");
+        }
     }
 }
 void heartPicked() { g_t.clean = false; }

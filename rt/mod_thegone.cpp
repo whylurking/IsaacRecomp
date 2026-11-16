@@ -572,8 +572,35 @@ void hookBalljunk(const Value& a) {
         S(a, "balljunk", Value((Object*)g_bjWrap));
     }
 }
+// ---- "Buffed" (option buffed = 1): x1.2 damage, Negative Isaac to start with (once unlocked), and a trinket for each
+// floor's boss beaten (the original game has no trinkets: a card). Not in Challenge Lab runs, which set their own rules.
+bool s_buffedOpt = false;
+bool buffedRun() { return s_buffedOpt && goneRunNow() && clabCharacter() < 0; }
+GameHook g_wDmgdoB{"dmgdo"};
+Value wDmgdoBuffed(Act& ac, Value t, int argc, Value* argv) {
+    Value r = callGameOrig(g_wDmgdoB, ac, t, argc, argv);
+    if (buffedRun() && r.isNum() && !std::isfinite(genesisOverride(2))) return Value(r.n * 1.2);
+    return r;
+}
+// the boss rooms (bossl, and bossl2 on an XL floor): cleared after they were seen shut, or Mom down
+double s_bossRoomSeen = -1; bool s_bossSawShut = false; std::set<double> s_bossPaid;
+void buffedTick(const Value& a) {
+    Value R = root();
+    double chaps = num(V(R, "chaps")), lev = num(V(R, "lev"), -1), key = chaps * 1000 + lev;
+    if (key != s_bossRoomSeen) { s_bossRoomSeen = key; s_bossSawShut = false; }
+    bool boss = lev == num(V(R, "bossl"), -2) || lev == num(V(R, "bossl2"), -2);
+    if (!boss || s_bossPaid.count(key)) return;
+    bool clear = num(V(a, "shutdoor"), 1) == 0 && num(V(a, "ashut"), 1) == 0;
+    if (!clear) { s_bossSawShut = true; return; }
+    if (!s_bossSawShut && !(num(V(a, "momdown")) > 0)) return;
+    s_bossPaid.insert(key);
+    // the game's own random trinket (5.35; a random card, 5.3, in the original game), left of the room's centre
+    call(a, "create", {Value(250.0), Value(280.0), Value(0.0), Value(0.0), Value(0.0), Value(0.0), Value(game() == "og" ? 5.3 : 5.35)});
+    logf("thegone: buffed: %s for the boss (floor %g, room %g)\n", game() == "og" ? "a card" : "a trinket", chaps, lev);
+}
 void startRun(const Value& a) {
     s_dealRoom = -1e9; s_dealTaken = false;
+    s_bossRoomSeen = -1; s_bossSawShut = false; s_bossPaid.clear();
     Value p = V(a, "player");
     if (!p.isObj()) return;
     // Spirit of the Night, as the game gives a character's starting items (the original game doesn't have it: its
@@ -590,7 +617,8 @@ void startRun(const Value& a) {
     for (const char* k : {"ups"}) { Value u = V(root(), k); if (u.isObj() && num(arrGet(u, 105)) > 0) setMem(u, Value(105.0), Value(0.0)); }
     { Value u = V(a, "ups"); if (u.isObj() && num(arrGet(u, 105)) > 0) setMem(u, Value(105.0), Value(0.0)); }
     { Value c = V(root(), "cols"); if (c.isObj() && c.o->kind == OK_ARRAY) { auto& el = ((Array*)c.o)->el; for (size_t i = 0; i < el.size();) if (num(el[i]) == 105) el.erase(el.begin() + i); else i++; } }
-    logf("thegone: a run as The Gone\n");
+    if (buffedRun() && unlocked(U_CARD)) S(root(), "pilc", Value((double)kCardCol));   // (held, as a card picked up)
+    logf("thegone: a run as The Gone%s\n", buffedRun() ? " (buffed)" : "");
 }
 }  // namespace
 
@@ -623,7 +651,7 @@ double cardTextW(const std::string& t, double k) {
     return std::max(0.0, w - 1.2) * k;
 }
 uint16_t cardTextShape(const std::string& t, double k, double x, double cy) { return letteringShape(t, k, x, cy, 1e9, nullptr, true); }
-void goneResume(bool gone) { s_running = true; s_goneRun = gone; }
+void goneResume(bool gone) { s_running = true; s_goneRun = gone; s_bossRoomSeen = -1; s_bossSawShut = false; s_bossPaid.clear(); }
 
 bool goneThingInfo(bool card, int id, std::string& name, std::string& desc, bool& active, int& quality) {
     active = false;
@@ -646,7 +674,8 @@ void goneUnlockAll() {   // (GenesisConsole's "unlock": everything, until the ga
     for (int i = 0; i < U_N; i++) g_u.session[i] = true;
     for (int j = 0; j < 3; j++) g_u.collSession[j] = true;   // (in the collection too, as the game's own items)
 }
-void thegoneTick(const ModInfo&) {
+void thegoneTick(const ModInfo& mod) {
+    { std::string b = mod.opt("buffed", "0"); s_buffedOpt = b == "1" || b == "yes" || b == "on" || b == "true"; }
     static bool rooted = false;
     if (!rooted) {
         rooted = true;
@@ -695,6 +724,7 @@ void thegoneTick(const ModInfo&) {
         return;
     }
     hookBalljunk(a);
+    if (s_buffedOpt && clabCharacter() < 0) { hookGameFn(g_wDmgdoB, a, wDmgdoBuffed); if (play) buffedTick(a); }
     Value p = V(a, "player"), ups = V(R, "ups"), aups = V(a, "ups");
     if (p.isObj() && !getenv("ISAAC_GONE_NOHP")) {
         // (the original game only hurts a player with hp > 0: there red hearts are kept at half a heart, which is

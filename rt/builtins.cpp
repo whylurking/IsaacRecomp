@@ -162,7 +162,7 @@ static Value str_fromCharCode(Act&, Value, int argc, Value* argv) { std::string 
 static Value num_toString(Act&, Value t, int argc, Value* argv) {
     double n = t.t == T_NUM ? t.n : (t.isObj() && t.o->kind == OK_BOXED ? toNum(((Boxed*)t.o)->prim) : toNum(t));
     int radix = argc ? toInt32(argv[0]) : 10;
-    if (radix == 10 || radix < 2 || radix > 36) return Value(toStr(Value(n)));
+    if (radix == 10 || radix < 2 || radix > 36 || !std::isfinite(n) || std::fabs(n) >= 9.2e18) return Value(toStr(Value(n)));   // (NaN / Infinity: the cast below is undefined)
     int64_t v = (int64_t)n; bool neg = v < 0; if (neg) v = -v; std::string s;
     do { int d = (int)(v % radix); s.insert(s.begin(), (char)(d < 10 ? '0' + d : 'a' + d - 10)); v /= radix; } while (v);
     if (neg) s.insert(s.begin(), '-'); return Value(mkstr(s));
@@ -421,6 +421,7 @@ static Value bd_fillRect(Act&, Value t, int argc, Value* argv) {
     BitmapData* b = asBD(t); int x, y, w, h; if (!b || !rectArg(arg(argc, argv, 0), x, y, w, h)) return VUNDEF;
     uint32_t c = (uint32_t)toInt32(arg(argc, argv, 1)); if (!b->transparent) c |= 0xff000000u; c = premul(c);
     int x0 = std::max(0, x), y0 = std::max(0, y), x1 = std::min(b->w, x + w), y1 = std::min(b->h, y + h);
+    if (x1 <= x0 || y1 <= y0) return VUNDEF;   // (empty or wholly outside: before v1.7 this wrote outside the bitmap)
     if (bdUseGpu(b)) { gpuFill(b, x0, y0, x1, y1, c); return VUNDEF; }
     if (b->lazy && x0 == 0 && y0 == 0 && x1 == b->w && y1 == b->h) { b->lazyFill = c; b->dirty(0, 0, b->w, b->h); return VUNDEF; }
     b->ensurePx();
@@ -639,7 +640,10 @@ static Value snd_getPan(Act&, Value t, int, Value*) { SoundObj* s = asSnd(t); re
 static void ser(std::string& o, const Value& v, int depth) {
     char b[64];
     switch (v.t) {
-        case T_NUM: snprintf(b, sizeof b, "n%.17g;", v.n); o += b; break;
+        case T_NUM:
+            if (std::isfinite(v.n)) { snprintf(b, sizeof b, "n%.17g;", v.n); o += b; }
+            else o += std::isnan(v.n) ? "nnan;" : v.n < 0 ? "n-inf;" : "ninf;";   // (the same text on every C runtime, see deser)
+            break;
         case T_BOOL: o += v.b ? "t" : "f"; break;
         case T_NULL: o += "z"; break;
         case T_STR: snprintf(b, sizeof b, "s%zu:", v.s->s.size()); o += b; o += v.s->s; break;
@@ -657,20 +661,69 @@ static void ser(std::string& o, const Value& v, int depth) {
         default: o += "u"; break;
     }
 }
-static Value deser(const std::string& s, size_t& i, int depth) {
-    if (i >= s.size() || depth > 40) return VUNDEF;
+// The save file is read strictly: anything that doesn't parse (a file cut short by a power cut or a full disk, a
+// length that runs past the end of the file...) sets `bad`, and the caller then doesn't use any of it. Before v1.7
+// nothing was checked: a cut file threw std::out_of_range (the program closed on start) or was loaded half, and
+// the next flush wrote that half over the file.
+static Value deser(const std::string& s, size_t& i, int depth, bool& bad) {
+    if (bad) return VUNDEF;
+    if (i >= s.size() || depth > 40) { bad = true; return VUNDEF; }
     char c = s[i++];
-    auto num = [&]() { size_t e = s.find_first_of(":;", i); size_t n = strtoull(s.substr(i, e - i).c_str(), nullptr, 10); i = e + 1; return n; };
+    // a decimal length up to ':' (digits only, and never more than what is left of the file)
+    auto num = [&]() -> size_t {
+        size_t e = i, n = 0;
+        while (e < s.size() && s[e] >= '0' && s[e] <= '9' && e - i < 12) n = n * 10 + (size_t)(s[e++] - '0');
+        if (e == i || e >= s.size() || s[e] != ':') { bad = true; return 0; }
+        i = e + 1;
+        if (n > s.size() - i) { bad = true; return 0; }   // (every element / key / character takes at least one byte)
+        return n;
+    };
     switch (c) {
-        case 'n': { size_t e = s.find(';', i); double d = strtod(s.substr(i, e - i).c_str(), nullptr); i = e + 1; return Value(d); }
-        case 't': return VTRUE; case 'f': return VFALSE; case 'z': return VNULL;
-        case 's': { size_t n = num(); std::string v = s.substr(i, n); i += n; return Value(mkstr(v)); }
-        case 'a': { size_t n = num(); Array* a = gcNew<Array>(); for (size_t k = 0; k < n; k++) a->el.push_back(deser(s, i, depth + 1)); return Value((Object*)a); }
-        case 'o': { size_t n = num(); Object* o = gcNew<Object>(protos::object);
-            for (size_t k = 0; k < n; k++) { size_t kl = num(); std::string key = s.substr(i, kl); i += kl; Value v = deser(s, i, depth + 1); setProp(o, intern(key), v); }
-            return Value(o); }
-        default: return VUNDEF;
+        case 'n': {
+            size_t e = s.find(';', i);
+            if (e == std::string::npos || e == i || e - i > 40) { bad = true; return VUNDEF; }
+            std::string t = s.substr(i, e - i); i = e + 1;
+            // Written with printf("%.17g"): Infinity and NaN come out as "inf" / "nan" / "-nan", but as "1.#INF" /
+            // "-1.#IND" / "1.#QNAN" from the old Windows C runtime and "nan(ind)" from the new one - and not every
+            // strtod reads back every spelling. A number that is neither is read as before.
+            // (save_converter.html writes "Infinity" / "NaN")
+            std::string lo = t; for (char& ch : lo) if (ch >= 'A' && ch <= 'Z') ch += 32;
+            if (lo.find("inf") != std::string::npos) return Value(t[0] == '-' ? -HUGE_VAL : HUGE_VAL);
+            if (lo.find("nan") != std::string::npos || lo.find("ind") != std::string::npos) return Value(std::nan(""));
+            return Value(strtod(t.c_str(), nullptr));
+        }
+        case 't': return VTRUE; case 'f': return VFALSE; case 'z': return VNULL; case 'u': return VUNDEF;
+        case 's': { size_t n = num(); if (bad) return VUNDEF; std::string v = s.substr(i, n); i += n; return Value(mkstr(v)); }
+        case 'a': {
+            size_t n = num(); if (bad) return VUNDEF;
+            Array* a = gcNew<Array>();
+            for (size_t k = 0; k < n && !bad; k++) a->el.push_back(deser(s, i, depth + 1, bad));
+            return Value((Object*)a);
+        }
+        case 'o': {
+            size_t n = num(); if (bad) return VUNDEF;
+            Object* o = gcNew<Object>(protos::object);
+            for (size_t k = 0; k < n && !bad; k++) {
+                size_t kl = num(); if (bad) break;
+                std::string key = s.substr(i, kl); i += kl;
+                Value v = deser(s, i, depth + 1, bad); if (bad) break;
+                setProp(o, intern(key), v);
+            }
+            return Value(o);
+        }
+        default: bad = true; return VUNDEF;
     }
+}
+// 0 = no such file (or empty), 1 = read into `out`, -1 = there is a file but it is not a whole save
+static int readSaveFile(const std::string& path, Value& out) {
+    FILE* f = platformFopen(path, "rb"); if (!f) return 0;
+    std::string s; char buf[16384]; size_t n; while ((n = fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
+    fclose(f);
+    if (s.empty()) return 0;
+    if (s.compare(0, 8, "ISAACSO1") != 0) return -1;
+    size_t i = 8; bool bad = false; Value d = deser(s, i, 0, bad);
+    if (bad || !d.isObj()) return -1;
+    out = d; return 1;
 }
 static Object* g_so = nullptr;
 bool g_saveLocked = false;
@@ -697,9 +750,20 @@ static Value so_getLocal(Act&, Value, int, Value*) {
     Object* so = gcNew<Object>(protos::sharedobject); so->kind = OK_SHAREDOBJ; gcPin(so);
     Value data = Value(gcNew<Object>(protos::object));
     if (!g_savePath.empty()) {
-        if (FILE* f = platformFopen(g_savePath, "rb")) {
-            std::string s; char buf[65536]; size_t n; while ((n = fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n); fclose(f);
-            if (s.compare(0, 8, "ISAACSO1") == 0) { size_t i = 8; Value d = deser(s, i, 0); if (d.isObj()) data = d; }
+        // The save is written to <save>.tmp and then renamed over the save (so_flush). When the save itself is missing
+        // or damaged, a whole .tmp is the newest good copy (on the Switch / PSP the old file is deleted before the
+        // rename: a power cut between the two leaves only the .tmp). A damaged save is never written over: it is
+        // kept as <save>.corrupt first.
+        Value d; int r = readSaveFile(g_savePath, d);
+        if (r == 1) data = d;
+        else {
+            Value t; int rt = readSaveFile(g_savePath + ".tmp", t);
+            if (r < 0) {
+                bool kept = platformCopyFile(g_savePath, g_savePath + ".corrupt");
+                logf("save: %s is damaged%s\n", g_savePath.c_str(), kept ? " (a copy was kept as .corrupt)" : "");
+            }
+            if (rt == 1) { data = t; logf("save: recovered from %s.tmp\n", g_savePath.c_str()); }
+            else if (r < 0) logf("save: starting with an empty save\n");
         }
     }
     setProp(so, intern("data"), data);

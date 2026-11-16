@@ -47,6 +47,12 @@ private:
     Stick st_[2];                 // 0 = move (left), 1 = shoot (right)
     Hold hold_[4];                // HUD buttons held by a finger (or waiting for the minimum hold time)
     int64_t menuId_ = -1; double menuX0_ = 0, menuY0_ = 0, menuT0_ = 0; bool menuMoved_ = false;
+    // fingers put down outside play (window px: where each landed, where it is): when play starts, each one still
+    // down becomes the joystick of its side (before, it stayed the menu's mouse, its button held, until a pause)
+    struct Pend { int64_t id = -1; double x0 = 0, y0 = 0, x = 0, y = 0; };
+    Pend pend_[4];
+    void pendSet(int64_t id, double x, double y, bool landed);
+    void pendDrop(int64_t id);
     bool lastPlay_ = false;
     int keyRef_[256] = {};
     void press(int code, bool down);

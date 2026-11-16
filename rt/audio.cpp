@@ -267,6 +267,8 @@ static void mix(void*, Uint8* stream, int len) {
 // changes to something that isn't a controller (headphones plugged in...), the game moves to the new default.
 static std::string g_devName;   // "" = SDL's default device
 static double g_devCheckAt[2] = {-1, -1};
+static bool g_wantDev = false;      // audioInit(true) ran: a device is wanted (false in the device-less test mode)
+static double g_devRetryAt = -1;    // no device is open: when to try again (set when the system reports a new one)
 static bool isControllerAudio(const std::string& n) {
     std::string l; for (char ch : n) l += (char)tolower((unsigned char)ch);
     for (const char* k : {"controller", "dualsense", "dualshock", "xbox", "gamepad", "joy-con"}) if (l.find(k) != std::string::npos) return true;
@@ -297,12 +299,12 @@ static std::string bestNonController() {
     }
     return best;
 }
-static bool openDevice(const std::string& name) {
+static bool openDevice(const std::string& name, bool quiet = false) {
     SDL_AudioSpec want{}, have{};
     // mix directly at the device's rate (one resampling step instead of ours + SDL's conversion)
     want.freq = (kIsAndroid || kIsSwitch) ? 48000 : kRate; want.format = kIsPsp ? AUDIO_S16SYS : AUDIO_F32SYS; want.channels = 2; want.samples = kIsAndroid ? 512 : 1024; want.callback = mix;   // (Android: ~11 ms)
     SDL_AudioDeviceID d = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
-    if (!d) { logf("audio: %s: %s\n", name.empty() ? "default device" : name.c_str(), SDL_GetError()); return false; }
+    if (!d) { if (!quiet) logf("audio: %s: %s\n", name.empty() ? "default device" : name.c_str(), SDL_GetError()); return false; }
     if (have.freq >= 8000 && have.freq <= 192000) g_rate = have.freq;
     g_dev = d; g_devName = name;
     logf("audio: %s, %d Hz, %d channels, %d-sample buffer%s\n", SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "?", have.freq, have.channels, have.samples,
@@ -319,15 +321,44 @@ void audioInit(bool device) {
         if (!other.empty()) def = other;
     }
     if (def.empty() || !openDevice(def)) openDevice(std::string());
+    g_wantDev = true;
+    if (!g_dev) logf("audio: no output device: the game goes on without sound (it is tried again when a device appears)\n");
     g_rootTracers.push_back([](Tracer& tr) { for (auto& c : g_chans) if (c.active || c.decOk) tr.mark(c.owner); });
 }
 // main thread: an audio device was added or removed (the system's default is checked a little later: it changes
 // asynchronously)
 void audioDevicesChanged(double now) {
+    if (g_wantDev && !g_dev) { g_devRetryAt = now + 0.5; return; }   // (no device so far: this may be one)
     if (kIsAndroid || kIsSwitch || g_devName.empty() || !g_dev) return;
     g_devCheckAt[0] = now + 0.5; g_devCheckAt[1] = now + 2.5;
 }
+// No output device (none plugged in, the last one unplugged, the audio server down): nothing calls mix(), so before
+// v1.7 no sound ever advanced or ended - every channel stayed busy (allocChan then drops new sounds), a Sound's
+// position stood still and onSoundComplete never came. The mixer is now run against the clock into a buffer nobody
+// hears, and a device is opened as soon as one appears.
+static void mixWithoutDevice(double now) {
+    static double last = -1; static double acc = 0;
+    if (last < 0 || now < last) { last = now; return; }
+    acc += std::min(now - last, 0.25) * g_rate; last = now;   // (a long stall is not caught up)
+    int frames = std::min((int)acc, 4096); if (frames <= 0) return;
+    acc -= frames;
+    static std::vector<float> buf; buf.assign((size_t)frames * 2, 0.f);   // (PSP: 16-bit frames, half the size: also fits)
+    int bytes = frames * 2 * (int)(kIsPsp ? sizeof(int16_t) : sizeof(float));
+    std::lock_guard<std::recursive_mutex> lk(g_devMu);
+    mix(nullptr, (Uint8*)buf.data(), bytes);
+}
 void audioDeviceTick(double now) {
+    if (g_wantDev && !g_dev) {
+        mixWithoutDevice(now);
+        if (g_devRetryAt >= 0 && now >= g_devRetryAt) {
+            g_devRetryAt = -1;
+            std::lock_guard<std::recursive_mutex> lk(g_devMu);
+            std::string def = (kIsAndroid || kIsSwitch) ? std::string() : defaultOutputName();
+            if (!def.empty() && isControllerAudio(def)) def = bestNonController();
+            if (def.empty() || !openDevice(def, true)) openDevice(std::string(), true);
+        }
+        return;
+    }
     for (double& at : g_devCheckAt) {
         if (at < 0 || now < at) continue;
         at = -1;
@@ -341,6 +372,7 @@ void audioDeviceTick(double now) {
         std::lock_guard<std::recursive_mutex> lk(g_devMu);
         SDL_CloseAudioDevice(g_dev); g_dev = 0;
         if (want.empty() || !openDevice(want)) openDevice(std::string());
+        if (!g_dev) { g_devRetryAt = now + 3.0; return; }   // (nothing could be opened: silent until a device appears)
     }
 }
 
@@ -356,6 +388,8 @@ static Chan* allocChan() {
     Chan* best = nullptr;
     for (auto& c : g_chans) if (!c.music && (!best || c.gen < best->gen)) best = &c;
     if (!best) return nullptr;
+    static const bool soundLog = getenv("ISAAC_SOUNDLOG") != nullptr;
+    if (soundLog) logf("[sound] every channel busy: the oldest one is cut\n");
     best->m.lock(); chanFree(*best); return best;
 }
 

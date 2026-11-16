@@ -842,6 +842,9 @@ static void compileNode(uint32_t i, const Mat& parent, const CX& pcx, bool maskP
     const SnapNode* p = (ip.prev >= 0 && !ip.snap && g_alpha != 1) ? &g_prevSnap->nodes[ip.prev] : nullptr;
     Mat local = p ? lerpMat(p->m, n.m, g_alpha) : n.m;
     Mat m = parent * local;
+    // scaled to nothing (_xscale or _yscale 0): Flash draws nothing; its hairlines were drawn as a 1 px line here
+    // (Wrath of the Lamb / Eternal's HUD keeps two empty bars, "black" and "black2", at _xscale 0 - issue #47)
+    if (!maskPass && std::fabs(m.a * m.d - m.b * m.c) < 1e-12) return;
     CX cx = maskPass ? CX() : pcx * (p ? lerpCX(p->cx, n.cx, (float)g_alpha) : n.cx);
     if (!maskPass && cx.am <= 0 && cx.aa <= 0) return;
     // option selected with a controller (menuui.cpp): everything drawn inside it goes through the shader's "ink"
@@ -875,6 +878,13 @@ static void compileNode(uint32_t i, const Mat& parent, const CX& pcx, bool maskP
         case SN_CONTAINER: compileChildren(i, m, cx, maskPass); break;
         case SN_BITMAP: { Cmd c; c.op = C_BITMAP; c.node = i; c.m = m; c.cx = cx; inkMark(c.cx); g_cmds.push_back(c); break; }
         case SN_CONTENT: {
+            // thinner than a third of a pixel on screen: Flash's anti-aliasing leaves next to nothing of it, while a
+            // quad that thin is drawn solid wherever it happens to cover a pixel's centre (a black line across the
+            // HUD in some window sizes: Wrath of the Lamb / Eternal's empty bars at _xscale 0.1 - issue #47)
+            if (!maskPass && n.hasBounds) {
+                RectF r; bool any = false; growR(r, any, m, n.bounds.x0, n.bounds.y0, n.bounds.x1, n.bounds.y1);
+                if (any && (r.x1 - r.x0 < 0.34 || r.y1 - r.y0 < 0.34)) break;
+            }
             Cmd c; c.op = C_LEAF; c.node = i; c.m = m; c.cx = cx; inkMark(c.cx);
             c.ratio = p && n.objKind == OK_MORPH ? (uint16_t)std::max(0L, std::min(65535L, std::lround(lerpd(p->ratio, n.ratio, std::min(1.0, g_alpha))))) : n.ratio;
             g_cmds.push_back(c); break;
@@ -1770,7 +1780,8 @@ void renderFrame(int winW, int winH, double alpha) {
         if (ay1 < ay0) ay1 = ay0;
     }
     {
-        uint32_t bg = g_curSnap->viewCut ? 0 : g_curSnap->bgColor; CX c;   // (cut: black, like around it) c.rm = ((bg >> 16) & 255) / 255.f; c.gm = ((bg >> 8) & 255) / 255.f; c.bm = (bg & 255) / 255.f;
+        uint32_t bg = g_curSnap->viewCut ? 0 : g_curSnap->bgColor; CX c;   // (cut: black, like around it)
+        c.rm = ((bg >> 16) & 255) / 255.f; c.gm = ((bg >> 8) & 255) / 255.f; c.bm = (bg & 255) / 255.f;
         quad(whiteTex(), stage, ax0, ay0, ax1, ay1, c);
     }
     flush();

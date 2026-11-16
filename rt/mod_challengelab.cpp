@@ -421,6 +421,7 @@ Value wTrixx(Act& ac, Value thisv, int argc, Value* argv) {
 
 // ---- base stats (advanced): after the game works them out (they are worked out again all the time)
 GameHook g_wDmgdo{"dmgdo"}, g_wFirr{"firr"}, g_wCreate{"create"}, g_wPlayc{"playc"}, g_wPlff{"plff"}, g_wFriends{"friends"};
+GameHook g_wLasershow{"lasershow"};
 int s_inPlff = 0;   // inside plff (the player's own shot; the familiars shoot from friends)
 std::vector<Value> s_blindTears;   // Curse of the Blind: the player's tears of this image, gone at its end
 int s_inFriends = 0;   // inside friends (the familiars: it can be called from plff, as they shoot when he does)
@@ -429,6 +430,16 @@ Value wFriends(Act& ac, Value t, int argc, Value* argv) {
     Value r = callGameOrig(g_wFriends, ac, t, argc, argv);
     s_inFriends--;
     return r;
+}
+// Curse of the Blind: the player's own lasers (Technology, Brimstone) aren't fired; the familiars' (Robo-Baby) are
+Value wLasershow(Act& ac, Value t, int argc, Value* argv) {
+    const Run& rr = run();
+    Value p = V(V(root(), "a"), "player");
+    if (rr.on && rr.c.blind && argc > 0 && argv[0].isObj() && p.isObj() && argv[0].o == p.o) {
+        S(V(root(), "a"), "brim", VFALSE);   // (playc sets it just before: Brimstone's beam is drawn while it is on)
+        return VUNDEF;
+    }
+    return callGameOrig(g_wLasershow, ac, t, argc, argv);
 }
 Value wPlff(Act& ac, Value t, int argc, Value* argv) {
     s_inPlff++;
@@ -463,16 +474,28 @@ Value wCreate(Act& ac, Value t, int argc, Value* argv) {
         // 8 px, for the eye - while a familiar, even next to him, is 25 px away or more)
         Value p = V(V(root(), "a"), "player");
         double dx = toNum(argv[0]) - num(V(p, "xp")), dy = toNum(argv[1]) - num(V(p, "yp"));
-        own = dx * dx + dy * dy < 10 * 10;
+        own = dx * dx + dy * dy < 18 * 18;   // (Inner Eye's side tears: 10 px)
     }
-    if (own) {
-        if (rr.c.blind) {   // Curse of the Blind: he aims (his familiars shoot that way) but his own tears never leave
+    // Curse of the Blind: he aims (his familiars shoot that way) but nothing of his own ever leaves - his tears in all
+    // their kinds (Inner Eye's three, Dr. Fetus' bombs...), Epic Fetus' target (type 37), Mom's Knife (made once, not
+    // in plff); the lasers (Technology, Brimstone) are in wLasershow. Not what an active item throws: Bob's Rotten
+    // Head is a tear too, made in plff while _root.bombnext is set (it went with the tears - issue #42)
+    if (rr.on && rr.c.blind && r.isObj() && argc >= 7 && !truthy(V(root(), "bombnext"))) {
+        bool mine = own || truthy(V(r, "knife"));
+        if (!mine && s_inPlff > 0 && s_inFriends == 0) {
+            Value p = V(V(root(), "a"), "player");
+            double dx = toNum(argv[0]) - num(V(p, "xp")), dy = toNum(argv[1]) - num(V(p, "yp"));
+            mine = dx * dx + dy * dy < 18 * 18;
+        }
+        if (mine) {
             // (hidden now, gone after this image: the familiars shoot off the player's own shot - with it gone at
             // once, they didn't shoot at all)
             if (r.o->isDisplay()) ((DisplayObject*)r.o)->visible = false;
             s_blindTears.push_back(r);
             return r;
         }
+    }
+    if (own) {
         if (std::isfinite(rr.c.range) && !std::isfinite(genesisOverride(3))) {   // its height and fall, as the game's "firrr" counts them
             double dm = num(V(r, "dm"), 0), f0 = -dm * 5 - num(V(r, "dy"), 0), f = std::max(5.0, f0 + rr.c.range * 23.0 / 6.5);
             S(r, "dy", Value(-f - dm * 5)); S(root(), "firrr", Value(f));
@@ -873,6 +896,17 @@ void challengelabTick(const ModInfo&) {
     }
     for (const Value& t : s_blindTears) { S(t, "done", VTRUE); if (t.o->isDisplay()) ((DisplayObject*)t.o)->visible = false; }
     s_blindTears.clear();
+    if (run().on && run().c.blind) {   // Curse of the Blind, what isn't made while he shoots:
+        Value a = V(root(), "a");
+        // Mom's Knife (made once, when it is taken, and thrown from then on): gone
+        Value balls = V(a, "ball");
+        if (balls.isObj() && balls.o->kind == OK_ARRAY)
+            for (const Value& e : ((Array*)balls.o)->el)
+                if (e.isObj() && truthy(V(e, "knife")) && !truthy(V(e, "done"))) { S(e, "done", VTRUE); if (e.o->isDisplay()) ((DisplayObject*)e.o)->visible = false; }
+        // Brimstone's beam: drawn by the head itself (player.d.d.d.d.z, there while it fires; its harm is lasershow's)
+        Value z = V(V(V(V(V(V(a, "player"), "d"), "d"), "d"), "d"), "z");
+        if (z.isObj() && z.o->isDisplay()) ((DisplayObject*)z.o)->visible = false;
+    }
     g_modMouseHook = onMouse;
     g_modHandHook = onHand;
     g_challengeNavHook = labNav;
@@ -908,6 +942,7 @@ void challengelabTick(const ModInfo&) {
     if (frame != 2 || !a.isObj()) return;
     hookGameFn(g_wTrixx, a, wTrixx);
     if (r.c.blind || std::isfinite(r.c.range) || std::isfinite(r.c.shot)) { hookGameFn(g_wCreate, a, wCreate); hookGameFn(g_wPlff, a, wPlff); hookGameFn(g_wFriends, a, wFriends); }
+    if (r.c.blind) hookGameFn(g_wLasershow, a, wLasershow);
     if (wantsStats(r.c)) {
         if (std::isfinite(r.c.damage)) hookGameFn(g_wDmgdo, a, wDmgdo);
         if (std::isfinite(r.c.tears)) hookGameFn(g_wFirr, a, wFirr);

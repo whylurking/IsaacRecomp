@@ -309,7 +309,10 @@ bool platformListDir(const std::string& dir, std::vector<std::string>& names) {
 bool platformMkdir(const std::string& path) { return mkdir(path.c_str(), 0777) == 0 || errno == EEXIST; }
 bool platformReplaceFile(const std::string& from, const std::string& to) {
 #if defined(__SWITCH__) || defined(__PSP__)
-    remove(to.c_str());   // (the SD card's / Memory Stick's FAT driver doesn't replace on rename)
+    // The SD card's / Memory Stick's FAT driver doesn't replace on rename: the old file has to go first. Between
+    // the two calls only `from` exists; the save loader (so_getLocal) looks for it when the save is missing.
+    if (rename(from.c_str(), to.c_str()) == 0) return true;
+    remove(to.c_str());
 #endif
     return rename(from.c_str(), to.c_str()) == 0;
 }

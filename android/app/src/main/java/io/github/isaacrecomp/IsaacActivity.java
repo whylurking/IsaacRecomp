@@ -131,11 +131,47 @@ public class IsaacActivity extends SDLActivity {
         }
     }
 
-    /** The IsaacRecomp folder at the root of the internal storage (/storage/emulated/0/IsaacRecomp). */
+    /**
+     * The data folder (the game, isaac.ini, saves, mods, log.txt), the first that exists of:
+     * 1. the folder written in IsaacRecomp/datadir.txt of the internal storage (its first line, a full path), so it
+     *    can be anywhere, e.g. /storage/1234-5678/Games/Isaac;
+     * 2. an IsaacRecomp folder at the root of another storage (SD card, USB drive), e.g. /storage/1234-5678/IsaacRecomp;
+     * 3. the IsaacRecomp folder at the root of the internal storage (/storage/emulated/0/IsaacRecomp), created if needed.
+     * (issue #46: devices with little internal storage). The native program logs which one it uses (log.txt there).
+     */
     public static String rootDir() {
-        File dir = new File(Environment.getExternalStorageDirectory(), "IsaacRecomp");
-        dir.mkdirs();
-        return dir.getAbsolutePath();
+        File internal = new File(Environment.getExternalStorageDirectory(), "IsaacRecomp");
+        String custom = firstLine(new File(internal, "datadir.txt"));
+        if (custom != null) {
+            File d = new File(custom);
+            d.mkdirs();
+            if (d.isDirectory() && d.canWrite()) return d.getAbsolutePath();
+        }
+        if (sSelf != null) {
+            File[] dirs = sSelf.getExternalFilesDirs(null);   // (one per storage: <volume>/Android/data/<app>/files)
+            if (dirs != null) for (File f : dirs) {
+                if (f == null) continue;
+                String p = f.getAbsolutePath();
+                int i = p.indexOf("/Android/");
+                if (i <= 0) continue;
+                File d = new File(p.substring(0, i), "IsaacRecomp");
+                if (!d.getAbsolutePath().equals(internal.getAbsolutePath()) && d.isDirectory() && d.canWrite()) return d.getAbsolutePath();
+            }
+        }
+        internal.mkdirs();
+        return internal.getAbsolutePath();
+    }
+
+    private static String firstLine(File f) {
+        if (!f.isFile()) return null;
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"))) {
+            String l;
+            while ((l = r.readLine()) != null) {
+                l = l.replace("\uFEFF", "").trim();
+                if (!l.isEmpty() && !l.startsWith(";") && !l.startsWith("#")) return l;
+            }
+        } catch (java.io.IOException e) { /* (unreadable: the default folders) */ }
+        return null;
     }
 
     public static boolean hasStorageAccess() {
@@ -152,8 +188,8 @@ public class IsaacActivity extends SDLActivity {
     private void showStorageDialog() {
         if (mDialog != null && mDialog.isShowing()) return;
         String msg = Build.VERSION.SDK_INT >= 30
-            ? "Isaac Recomp reads the game (Isaac.exe) and keeps its settings and saves in the \"IsaacRecomp\" folder of your internal storage.\n\nAllow \"All files access\" on the next screen, then come back."
-            : "Isaac Recomp reads the game (Isaac.exe) and keeps its settings and saves in the \"IsaacRecomp\" folder of your internal storage.\n\nAllow access to your files on the next screen.";
+            ? "Isaac Recomp reads the game (Isaac.exe) and keeps its settings and saves in the \"IsaacRecomp\" folder of your internal storage (or of your SD card).\n\nAllow \"All files access\" on the next screen, then come back."
+            : "Isaac Recomp reads the game (Isaac.exe) and keeps its settings and saves in the \"IsaacRecomp\" folder of your internal storage (or of your SD card).\n\nAllow access to your files on the next screen.";
         mDialog = new AlertDialog.Builder(this)
             .setTitle("Storage access")
             .setMessage(msg)
