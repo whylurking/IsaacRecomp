@@ -182,13 +182,16 @@ Included:
                       row without getting hit or picking up a heart. With him, Mom's
                       Heart unlocks the card Negative Isaac (a playing card with the
                       red back: 15-second shield), Mom's
-                      Heart with no item but his own unlocks Nothing (treasure rooms:
-                      some enemies just aren't there), Isaac unlocks The Void Shard
+                      Heart with no passive item but his own unlocks Nothing (treasure
+                      rooms: some enemies just aren't there; actives, trinkets, cards,
+                      pills and bombs are fine), Isaac unlocks The Void Shard
                       (devil rooms: enemy shots may go through you) and Satan
                       unlocks Black Mirror (treasure rooms: the room in negative,
                       half the enemies turned round - what came for you keeps away
                       and the other way round - and the others going for each
-                      other). Kept in saves/thegone_<game>.txt.
+                      other). Kept in saves/thegone_<game>.txt. Option buffed = 1:
+                      x1.2 damage, Negative Isaac to start with (once unlocked) and a
+                      random trinket for each boss beaten (original game: a card).
   RainbowVision       colours for colour-blind players: the whole picture is
   (rainbowvision)     recoloured so colours you can't tell apart look different
                       (hearts, pills, enemies). Option type = deuteranopia (green-
@@ -346,6 +349,8 @@ Press F3 during play. The following appear in the top-left corner, updated every
   HELD                  frames where the logic hadn't finished its tick yet
   LOGIC / MARGIN        logic time per tick (30 per second) and the margin the renderer
                         leaves it to finish (adjusts itself)
+  TICK WAIT             how long a finished tick waits for the next image to start (the
+                        lower and steadier, the sooner your input shows: a few ms)
   RENDER                CPU time spent preparing the frame
   GPU/VSYNC WAIT        time spent waiting for the graphics card / the refresh
                         (with vsync it's normal for this to be high: it's idle time)
@@ -368,6 +373,14 @@ or newer and OpenGL ES 3.0.
 3. Open Isaac Recomp. The first time it asks for "All files access" (Android 11 and
    newer) or for access to your files: the game, isaac.ini, the saves and log.txt all
    live in that folder.
+Little internal storage? The folder can be on an SD card or USB drive instead: an
+IsaacRecomp folder at the root of the card (e.g. /storage/1234-5678/IsaacRecomp) is
+used when there is one (Android 11 and newer: "All files access" covers the card). Or
+put the full path of any folder on the first line of IsaacRecomp/datadir.txt in the
+internal storage (e.g. /storage/1234-5678/Games/Isaac): that folder is used. Android 10
+and older only let apps write on a card in their own folder there:
+/storage/<card>/Android/data/io.github.isaacrecomp/files (write that in datadir.txt).
+log.txt, in the folder used, says which one it is.
 Touch controls: put a finger on the left half of the screen to move and on the right
 half to shoot; a joystick appears where the finger lands, stays there while you slide
 it, and disappears when you lift it (how far you push the left one sets your speed, see
@@ -391,7 +404,7 @@ SAVE DATA
 ---------
 The game is saved when you quit (and whenever the game asks for it) in:
   Windows / Linux: the "saves" folder next to the program (next to "tools")
-  Android: IsaacRecomp/saves/ in the internal storage (up to 1.3.1: IsaacRecomp/, copied
+  Android: IsaacRecomp/saves/ in the internal storage or SD card (up to 1.3.1: IsaacRecomp/, copied
            over the first time 1.4.0 starts)
   Switch:  sd:/switch/isaac/saves/ (next to "tools"; up to 1.3.1: sd:/switch/isaac/, copied
            over the first time 1.4.0 starts)
@@ -403,6 +416,73 @@ starts, the saves found there are copied to the "saves" folder (the old ones are
 The same folder also holds preload.txt / preload_og.txt / preload_eternal.txt
 (graphics learned on this machine), screenshots and performance.txt.
 Saves from the Flash game can be converted with tools/save_converter.html (see above).
+
+CHANGES IN VERSION 17 (v1.7.0 public release numbering)
+--------------------------------------------------------
+Mostly fixes, and one new option for The Gone.
+- The Gone (mod 1.5): a new option, Buffed (off by default; tools/mod_manager.html or
+  "buffed = 1" in mods.txt): 20% more damage, he starts holding Negative Isaac once it
+  is unlocked, and each boss he beats leaves a random trinket in its room (in the
+  original game, which has no trinkets, a random card). Not in Challenge Lab runs.
+- The Gone: to unlock Nothing (beat Mom's Heart with him) he may now use active items,
+  trinkets, cards, pills and bombs; only a passive item picked up rules it out for that
+  run. In the three games.
+- Windowed: a thin black line in Wrath of the Lamb's and Eternal Edition's HUD (left,
+  under the band) at some window sizes. Two empty bars of the HUD, a tenth of a pixel
+  wide, were drawn a whole pixel wide whenever they happened to fall on a pixel. Shapes
+  that thin are no longer drawn (Flash's own anti-aliasing leaves next to nothing of
+  them). (issue #47)
+- StatOn: the devil / angel room chance (show_deals = 0) and, in the original game, the
+  luck line came back after the HUD was made again (a boss room, a new floor) and stayed.
+  (issue #49)
+- Challenge Lab, Curse of the Blind: Bob's Rotten Head disappeared when thrown (it is
+  made like a tear); it is thrown and blows up again. (issue #42)
+- Android: the data folder can be on an SD card or USB drive: an IsaacRecomp folder at
+  the root of the card is used when there is one, or any folder written on the first
+  line of IsaacRecomp/datadir.txt in the internal storage (see ANDROID). (issue #46)
+- Input delay: the game's 30 ticks a second are kept in step with the screen so that
+  each one is shown as soon as it is ready. One slow tick - entering a new
+  room - used to throw that off for minutes: until it settled, what you pressed reached
+  the screen up to one image later (8 ms on average at 60 Hz), a delay that came and
+  went. It now settles within three seconds. On every platform; the Switch, where rooms
+  take longest to build, is where it should show most. F3 (Switch: L3 + R3) shows it as
+  TICK WAIT.
+- Saves: a save file that was cut short (the power went out or the disk filled up while
+  it was written) used to close the program on start, or was loaded half - and then
+  written back like that, losing the rest for good. Such a file is now never used and
+  never written over: it is kept next to the save as "<save>.sol.corrupt", and the game
+  carries on from the last whole copy it finds ("<save>.sol.tmp") or, with none, from
+  an empty save.
+- Switch: if the console lost power at the exact moment the game saved, the save could
+  be left deleted with the new one unfinished. The finished copy is now found and used
+  on the next start.
+- Touch controls: with the game's "Lefty Flip" option on, the movement joystick shot and
+  the shooting one walked; with "Azerty" on, pushing the joystick left used the card /
+  pill instead of walking, and up did nothing. Both joysticks and the HUD buttons now
+  always do what they say, whatever those two options are set to (which side moves is
+  still "Touch: which side moves" in the controls screen).
+- Sound: with no sound device at all (nothing plugged in, or the only one unplugged while
+  playing) the game's sounds never ended inside the game: after a while no new sound
+  could start and whatever waits for a sound to finish waited forever. The game now runs
+  the same with no device, and the sound comes back by itself when one appears.
+- Sound: on a PC with no sound system at all (no PulseAudio server, no sound card
+  driver), the program used to close on start with an error; it now starts without
+  sound.
+- The PSP version is no longer kept up (it stays at 1.6.0).
+- The area behind the game is now painted with the game's own background colour, as
+  Flash does, instead of always white.
+- PC: the program no longer keeps using more and more memory while its window is being
+  dragged or resized, or while a system dialog is in front of it; the game waits instead.
+- Infinity and "not a number" values in a save are now written the same way by the
+  Windows, Linux, Android and Switch versions (how they were written depended on how
+  each one was built, and a save carried from one to another could read them as a
+  different number).
+- tools/save_converter.html: converting a save from this version to the Flash game no
+  longer stops with an error when the save holds a list inside another list or inside
+  an object, and Infinity / "not a number" values are kept as they are.
+- A drawing bug that could write outside a picture's memory (BitmapData.fillRect with an
+  area wholly outside the bitmap, or with a negative size) is fixed. The three games
+  were not seen doing that themselves.
 
 CHANGES IN VERSION 16 (v1.6.0 public release numbering)
 --------------------------------------------------------
@@ -458,6 +538,11 @@ CHANGES IN VERSION 16 (v1.6.0 public release numbering)
   the next tear).
 - The downloads now come with the "mods" folder (every mod and the Challenge Lab list)
   and an empty "saves" folder, next to the program (Switch: in switch/isaac/).
+- Challenge Lab, Curse of the Blind: the player can no longer shoot by himself in any way
+  (Inner Eye's side tears, Brimstone, Technology, Mom's Knife and Epic Fetus got through);
+  his familiars and active items still work.
+- Android: a finger already on the shooting joystick when a run starts (put down while the
+  run was loading) shoots at once; before, shooting stayed stuck until a pause.
 - Ending 5's music no longer cuts out and starts again half way (a stretch of the
   animation with no sound in it: the music ran on and was pulled back). Issue #38.
 - The Gone: the devil deals of a later run's devil room could all stay locked (pushed

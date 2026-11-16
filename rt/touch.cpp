@@ -53,8 +53,16 @@ void TouchControls::steer(Stick& s, int which, double px, double py) {
     for (int i = 0; i < 4; i++) if (want[i] != s.keys[i]) { s.keys[i] = want[i]; press(codes[i], want[i] != 0); }
 }
 
+void TouchControls::pendSet(int64_t id, double x, double y, bool landed) {
+    for (auto& p : pend_) if (p.id == id) { p.x = x; p.y = y; return; }
+    if (!landed) return;
+    for (auto& p : pend_) if (p.id == -1) { p = Pend{id, x, y, x, y}; return; }
+}
+void TouchControls::pendDrop(int64_t id) { for (auto& p : pend_) if (p.id == id) p = Pend(); }
+
 void TouchControls::down(int64_t id, double px, double py, const TouchCtx& c, double now) {
     double sx, sy; if (!toStage(c, px, py, sx, sy)) return;
+    if (!c.gameplay) pendSet(id, px, py, true);
     if (c.gameplay) {
         // HUD icons first. Tested in window pixels: on a wide phone the bomb row is only ~2 mm tall, so every
         // target is grown to a minimum finger-sized square (13% of the screen height) around its center; where
@@ -96,6 +104,7 @@ void TouchControls::down(int64_t id, double px, double py, const TouchCtx& c, do
 
 void TouchControls::move(int64_t id, double px, double py, const TouchCtx& c, double now) {
     (void)now;
+    pendSet(id, px, py, false);
     for (int w = 0; w < 2; w++) if (st_[w].id == id) { steer(st_[w], w, px, py); return; }
     if (id == menuId_) {
         double sx, sy; if (!toStage(c, px, py, sx, sy)) return;
@@ -105,6 +114,7 @@ void TouchControls::move(int64_t id, double px, double py, const TouchCtx& c, do
 }
 
 void TouchControls::up(int64_t id, double px, double py, const TouchCtx& c, double now) {
+    pendDrop(id);
     for (int w = 0; w < 2; w++) if (st_[w].id == id) {
         Stick& s = st_[w];
         static const int kMove[4] = {'A', 'W', 'D', 'S'}, kShoot[4] = {37, 38, 39, 40};
@@ -129,6 +139,7 @@ void TouchControls::releaseAll(double now) {
     }
     for (auto& h : hold_) if (h.code) { press(h.code, false); h = Hold(); }
     menuId_ = -1;
+    for (auto& p : pend_) p = Pend();
 }
 
 void TouchControls::prune(const std::vector<int64_t>& live, double now) {
@@ -142,6 +153,8 @@ void TouchControls::prune(const std::vector<int64_t>& live, double now) {
         s.id = -1;
     }
     for (auto& h : hold_) if (h.code && h.id >= 0 && !on(h.id)) { h.up = true; h.id = -2; }
+    for (auto& p : pend_) if (p.id != -1 && !on(p.id)) p = Pend();
+    if (menuId_ != -1 && !on(menuId_)) menuId_ = -1;
 }
 
 void TouchControls::update(const TouchCtx& c, double now) {
@@ -159,6 +172,25 @@ void TouchControls::update(const TouchCtx& c, double now) {
             }
         }
         for (auto& h : hold_) if (h.code) { press(h.code, false); h = Hold(); }
+        if (c.gameplay) {
+            // a finger still down from the menus: the mouse button it held is let go, and it becomes the joystick of
+            // its side, its base where it landed (it is already pushed: Isaac shoots / walks that way at once)
+            if (menuId_ != -1) {
+                double sx, sy;
+                for (auto& p : pend_) if (p.id == menuId_ && toStage(c, p.x, p.y, sx, sy)) { out_.mouse(0, sx, sy); out_.mouse(2, sx, sy); }
+            }
+            for (auto& p : pend_) {
+                if (p.id == -1) continue;
+                int which = (p.x0 < c.winW * 0.5) != g_swap ? 0 : 1;
+                Stick& s = st_[which];
+                if (s.id == -1) {
+                    s.id = p.id; s.cx = s.kx = p.x0; s.cy = s.ky = p.y0;
+                    s.r = std::max(40.0, std::min(330.0, std::min(c.winW, c.winH) * g_sizeK));
+                    steer(s, which, p.x, p.y);
+                }
+                p = Pend();
+            }
+        } else for (auto& p : pend_) p = Pend();
         menuId_ = -1;
     }
     for (auto& h : hold_) if (h.code && h.up && now - h.since >= kMinHold) { press(h.code, false); h = Hold(); }

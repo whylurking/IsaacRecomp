@@ -238,7 +238,13 @@
       else if (typeof v === 'string') { var e = enc.encode(v); if (e.length > 65535) { b(12); u32(e.length); } else { b(2); u16(e.length); } e.forEach(b); }
       else if (v === null) b(5);
       else if (v === undefined) b(6);
-      else if (v.arr) { b(8); u32(v.length); v.entries.forEach(function (e) { key(String(e[0])); val(e[1]); }); u16(0); b(9); }
+      else if (v.arr) {
+        // (an array at any depth - inside an object, or an array of arrays - arrives here as it was read: with
+        // "items" and without "entries". Before v1.7 that stopped the conversion with an error.)
+        var es = v.entries;
+        if (!es) { es = []; for (var i = 0; i < v.length; i++) es.push([i, v.items.has(i) ? v.items.get(i) : undefined]); }
+        b(8); u32(v.length); es.forEach(function (e) { key(String(e[0])); val(e[1]); }); u16(0); b(9);
+      }
       else if (v.obj) { b(3); v.keys.forEach(function (k) { key(k); val(v.vals.get(k)); }); u16(0); b(9); }
       else b(6);
     }
@@ -311,13 +317,22 @@
     function bytes(n) { if (p + n > buf.length) throw new Error('The IsaacRecomp save is cut short.'); var s = dec.decode(buf.subarray(p, p + n)); p += n; return s; }
     function val(depth) {
       if (depth > 40) throw new Error('The IsaacRecomp save is nested too deeply.');
+      if (p >= buf.length) throw new Error('The IsaacRecomp save is cut short.');
       var c = String.fromCharCode(buf[p++]);
       switch (c) {
         case 'u': return undefined;
         case 'z': return null;
         case 't': return true;
         case 'f': return false;
-        case 'n': var e = p; while (e < buf.length && buf[e] !== 59) e++; var x = Number(dec.decode(buf.subarray(p, e))); p = e + 1; return x;
+        case 'n':
+          var e = p; while (e < buf.length && buf[e] !== 59) e++;
+          if (e >= buf.length) throw new Error('The IsaacRecomp save is cut short.');
+          var t = dec.decode(buf.subarray(p, e)), x = Number(t); p = e + 1;
+          // (the game writes numbers with C's printf: Infinity is "inf" and NaN is "nan" / "-nan" - "1.#INF", "1.#IND",
+          // "1.#QNAN" or "nan(ind)" on Windows - none of which Number() reads)
+          if (/inf/i.test(t)) x = t.charAt(0) === '-' ? -Infinity : Infinity;
+          else if (/nan|ind/i.test(t)) x = NaN;
+          return x;
         case 's': return bytes(int(58));
         case 'a': var len = int(58), a = mkArr(len); for (var i = 0; i < len; i++) { var v = val(depth + 1); if (v !== undefined) a.items.set(i, v); } return a;
         case 'o': var cnt = int(58), o = mkObj(); for (var j = 0; j < cnt; j++) { var k = bytes(int(58)); objSet(o, k, val(depth + 1)); } return o;

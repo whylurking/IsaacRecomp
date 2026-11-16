@@ -222,7 +222,7 @@ elseif(NINTENDO_SWITCH)
   # .elf -> .nro (icon + hbmenu metadata)
   set(APP_TITLE "The Binding of Isaac")
   set(APP_AUTHOR "whylurking")
-  set(APP_VERSION "1.6.0")
+  set(APP_VERSION "1.7.0")
   add_custom_command(TARGET isaac POST_BUILD
     COMMAND ${DEVKITPRO}/tools/bin/nacptool --create "${APP_TITLE}" "${APP_AUTHOR}" "${APP_VERSION}" isaac.nacp
     COMMAND ${DEVKITPRO}/tools/bin/elf2nro $<TARGET_FILE:isaac> isaac.nro --icon=${CMAKE_SOURCE_DIR}/switch/icon.jpg --nacp=isaac.nacp

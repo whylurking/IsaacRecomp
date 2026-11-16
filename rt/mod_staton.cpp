@@ -212,7 +212,7 @@ double g_tearFirrr = NAN, g_tearItems = 0;   // firrr of the last tear, and rang
 void removeClip() {
     if (g_clip && !g_clip->removed && g_clip->parent) removeObject(g_clip);
     g_clip = nullptr;
-    for (auto& r : g_rows) { r.sym = nullptr; r.shadow = r.text = r.up = r.upShadow = r.down = r.downShadow = nullptr; r.prev = NAN; r.deltaUntil = 0; }
+    for (auto& r : g_rows) { r.sym = nullptr; r.shadow = r.text = r.up = r.upShadow = r.down = r.downShadow = nullptr; r.prev = NAN; r.deltaUntil = 0; r.shown = true; }   // (a new column is built shown: rows turned off are hidden again - issue #49)
     g_damage = NAN; g_range = NAN; g_tearFirrr = NAN;
 }
 

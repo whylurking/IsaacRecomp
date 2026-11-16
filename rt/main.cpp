@@ -654,7 +654,12 @@ int main(int argc, char** argv) {
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");   // back = pause / Esc (instead of closing the app)
 #endif
+    // Audio is started on its own: a system with no audio back end at all (no PulseAudio server, no sound card
+    // driver...) made SDL_Init fail and the program close; it now goes on without sound (audio.cpp: no device).
+    const bool wantAudio = (sdlFlags & SDL_INIT_AUDIO) != 0;
+    sdlFlags &= ~(Uint32)SDL_INIT_AUDIO;
     if (SDL_Init(sdlFlags) != 0) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return 1; }
+    if (wantAudio && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) logf("audio: SDL couldn't start its audio (%s)\n", SDL_GetError());
     if (found.empty()) {
 #if defined(__ANDROID__)
         showError("The Binding of Isaac",
@@ -810,7 +815,7 @@ int main(int argc, char** argv) {
     // ---- performance diagnostics (F3): overlay + performance.txt in the saves folder
     bool perfOn = perfStart || cfg.performance; std::vector<std::string> perfLines;
     struct PerfWin { int frames = 0, ticks = 0, slow = 0, rasters = 0, held = 0, tex = 0, pending = 0; double frameMax = 0, logic = 0, logicMax = 0, render = 0, renderMax = 0, swap = 0, rasterMs = 0, upMB = 0, upMs = 0;
-                     double adopt = 0, compile = 0, exec = 0, other = 0; int ent = 0, nodes = 0, quads = 0, draws = 0, filters = 0, fhits = 0; } pw;
+                     double adopt = 0, compile = 0, exec = 0, other = 0, tickWait = 0; int ent = 0, nodes = 0, quads = 0, draws = 0, filters = 0, fhits = 0; } pw;
     double pwStart = nowSec();
     // performance.txt is written from a separate thread (writing to the SD card is slow and must not stall the frame)
     std::string perfPath = pref + "performance.txt";
@@ -1020,6 +1025,10 @@ int main(int argc, char** argv) {
             while (logicRun) {
                 if (flushReq.load() != flushDone.load()) { int r = flushReq.load(); sharedObjectFlushAll(); flushDone = r; }
                 if (logicPaused) { SDL_Delay(20); base = nowSec() - n * dt; continue; }   // (frozen while in the background)
+                // The main thread takes the snapshots; while it can't (the window is being dragged or resized on Windows,
+                // a system dialog is open...) the queue grew without limit, each snapshot holding its display list.
+                // Past ~3 s of ticks the game waits instead, as it does in the background.
+                { size_t queued; { std::lock_guard<std::mutex> lk(snapMu); queued = snapQ.size(); } if (queued >= 90) { SDL_Delay(5); base = nowSec() - n * dt; continue; } }
                 double target = base + n * dt, now = nowSec();
                 if (now < target) {
                     double wait = target - now;
@@ -1091,8 +1100,18 @@ int main(int argc, char** argv) {
                 // tick is published ~1.5 ms before a frame starts: the input it read reaches the screen as soon as
                 // possible and no frame has to guess. Only the timing moves: the game itself is not affected.
                 {
-                    static double pubEst = 0.004;
-                    pubEst = std::max(snap->pubDelay, pubEst - 0.00002);   // (the recent worst, slowly forgotten)
+                    // How long a tick takes to be published: the highest of the last 3 s, leaving out one in thirty.
+                    // (Until v1.6 it was the highest ever seen, forgotten at 0.6 ms per second: one slow tick - building
+                    // a room takes 100-300 ms on the Switch - left the estimate wrong for minutes, and since only its
+                    // remainder modulo the frame period counts, the tick clock was steered to a point that slid through
+                    // the whole frame every ~28 s. Ticks then waited anything from 0 to a whole frame before being
+                    // shown, 8 ms on average at 60 Hz, instead of the 1.5 ms asked for.)
+                    static double pubHist[90]; static int pubN = 0, pubI = 0;
+                    pubHist[pubI] = snap->pubDelay; pubI = (pubI + 1) % 90; if (pubN < 90) pubN++;
+                    double sorted[90]; std::copy(pubHist, pubHist + pubN, sorted);
+                    int kth = pubN - 1 - pubN / 30;
+                    std::nth_element(sorted, sorted + kth, sorted + pubN);
+                    double pubEst = sorted[kth];
                     double P = framePeriod.load();
                     static const bool off = getenv("ISAAC_NOPHASELOCK") != nullptr;   // (testing)
                     if (P > 0 && !off) {
@@ -1281,7 +1300,29 @@ int main(int argc, char** argv) {
         const bool pace = vsyncOn && !cfg.gpuSync && cfg.lowLatency;   // (with gpu_sync we already wait for the whole GPU)
         // ---- touch screen (Android, Switch handheld; on PC with touch_controls = 1): joysticks, HUD taps, menus (touch.h)
         TouchControls touch({
-            [&](int code, bool down) { keySrc(SRC_TOUCH, code, down, code == 32 ? 32 : 0); },
+            [&](int code, bool down) {
+                // The touch controls name their keys in the default layout (WASD + arrows, E, Space, Q, P); the game
+                // reads other keys with its "Azerty" / "Lefty Flip" options on, so each one is sent as the key of its
+                // ACTION (before v1.7 the left stick shot with Lefty Flip on, and with Azerty it used the card instead
+                // of walking left). The key sent on the press is remembered: the release lets go of that same key.
+                static int sent[256] = {0};
+                auto translate = [&](int c) {
+                    int a = -1;
+                    switch (c) {
+                        case 'W': a = A_MOVE_UP; break; case 'S': a = A_MOVE_DOWN; break; case 'A': a = A_MOVE_LEFT; break; case 'D': a = A_MOVE_RIGHT; break;
+                        case 38: a = A_SHOOT_UP; break; case 40: a = A_SHOOT_DOWN; break; case 37: a = A_SHOOT_LEFT; break; case 39: a = A_SHOOT_RIGHT; break;
+                        case 'E': a = A_BOMB; break; case 32: a = A_ITEM; break; case 'Q': a = A_CARD; break; case 'P': a = A_PAUSE; break;
+                    }
+                    if (a < 0) return c;
+                    Ctx cx = ctxNow(); int g = gameCode(a, cx.frog, cx.lefty);
+                    return g > 0 && g < 256 ? g : c;
+                };
+                if (code <= 0 || code >= 256) return;
+                int out;
+                if (down) { out = translate(code); if (sent[code] && sent[code] != out) keySrc(SRC_TOUCH, sent[code], false); sent[code] = out; }
+                else { out = sent[code] ? sent[code] : translate(code); sent[code] = 0; }
+                keySrc(SRC_TOUCH, out, down, out == 32 ? 32 : 0);
+            },
             [&](int type, double sx, double sy) { pushIn({1, type, 0, false, sx, sy}); },
             [&](double sx, double sy) { pushIn({4, 0, 0, false, sx, sy}); }});
         auto touchCtx = [&]() {
@@ -1802,6 +1843,7 @@ int main(int argc, char** argv) {
                     sp = snapQ.front(); snapQ.pop_front();
                 }
                 procTimes.push_back(sp->pubDelay); if (procTimes.size() > 60) procTimes.pop_front();
+                if (perfOn) pw.tickWait += std::max(0.0, fstart - (sp->time + sp->pubDelay)) * 1000.0;   // (published -> this frame started)
                 if (perfOn) { pw.ticks++; pw.logic += sp->logicMs; pw.logicMax = std::max(pw.logicMax, sp->logicMs); pw.ent = sp->entities; }
                 frameLogic = std::max(frameLogic, sp->logicMs);
                 renderAdopt(sp); adopted++;
@@ -1918,7 +1960,7 @@ int main(int argc, char** argv) {
                     double sw = pw.frames ? pw.swap / pw.frames : 0, gc = g_gcMs - gcMs0; gcMs0 = g_gcMs;
                     char l[5][200];
                     snprintf(l[0], 200, "FPS %.0f (%.0f HZ)  MAX FRAME %.1f MS  HITCHES %d  HELD %d", fps, refresh, pw.frameMax, pw.slow, pw.held);
-                    snprintf(l[1], 200, "LOGIC %.2f MS (MAX %.1f)  %d TICKS/S  MARGIN %.1f MS", lg, pw.logicMax, (int)(pw.ticks / std::max(1e-3, secs) + 0.5), delta * 1000);
+                    snprintf(l[1], 200, "LOGIC %.2f MS (MAX %.1f)  %d TICKS/S  MARGIN %.1f MS  TICK WAIT %.1f MS", lg, pw.logicMax, (int)(pw.ticks / std::max(1e-3, secs) + 0.5), delta * 1000, pw.ticks ? pw.tickWait / pw.ticks : 0.0);
                     snprintf(l[2], 200, "RENDER %.2f MS (MAX %.1f)  GPU/VSYNC WAIT %.1f MS", rd, pw.renderMax, sw);
                     snprintf(l[3], 200, "RASTER %d (%.1f MS)  UPLOAD %.1f MB (%.1f MS)  NEW TEX %d  GC %.1f MS  ENT %d", pw.rasters, pw.rasterMs, pw.upMB, pw.upMs, pw.tex, gc, pw.ent);
                     int nf = std::max(1, pw.frames);
